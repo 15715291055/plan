@@ -1,0 +1,27 @@
+{
+  "name": "study-planner",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@vitejs/plugin-react": "^4.3.3",
+    "lucide-react": "^0.468.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "@supabase/supabase-js": "^2.47.10",
+    "motion": "^12.23.12",
+    "zod": "^3.23.8",
+    "typescript": "^5.6.3",
+    "vite": "^5.4.10"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1"
+  },
+  "engines": { "node": ">=18" }
+}
