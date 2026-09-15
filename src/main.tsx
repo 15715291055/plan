@@ -5,7 +5,7 @@ import {
   AlarmClock, ArrowRight, BarChart3, BookOpen, CalendarDays, Check,
   ChevronLeft, ChevronRight, CircleHelp, Clock3, FileText, Filter,
   Flame, LayoutDashboard, ListTodo, Menu, MoreHorizontal, Pause, Play,
-  Plus, RefreshCw, Search, Settings, Sparkles, Timer, Upload, X, Zap, Pencil,
+  Plus, RefreshCw, Search, Settings, Sparkles, Timer, Upload, X, Zap, Pencil, PanelLeftClose, PanelLeftOpen,
 } from 'lucide-react'
 import {
   createTask as createTaskRecord,
@@ -116,6 +116,7 @@ function App() {
   const [timerTask, setTimerTask] = useState<string | null>(null)
   const [timerSeconds, setTimerSeconds] = useState(0)
   const [mobileOpen, setMobileOpen] = useState(false)
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => { try { return localStorage.getItem('study-sidebar-collapsed') === 'true' } catch { return false } })
   const [replanning, setReplanning] = useState(false)
   const [deepSeekKey, setDeepSeekKey] = useState('')
   const [aiDrafts, setAiDrafts] = useState<TaskDraft[]>([])
@@ -149,6 +150,7 @@ function App() {
     return () => window.clearInterval(interval)
   }, [timerTask])
   useEffect(() => { if (toast) { const t = window.setTimeout(() => setToast(''), 2800); return () => window.clearTimeout(t) } }, [toast])
+  useEffect(() => { try { localStorage.setItem('study-sidebar-collapsed', String(sidebarCollapsed)) } catch { /* storage may be unavailable */ } }, [sidebarCollapsed])
 
   const scheduledTasks = tasks.map(task => {
     const item = scheduleItems.find(scheduleItem => scheduleItem.taskId === task.id)
@@ -385,16 +387,16 @@ function App() {
   const timerLabel = `${String(Math.floor(timerSeconds / 60)).padStart(2, '0')}:${String(timerSeconds % 60).padStart(2, '0')}`
   const backgroundState: ShanHaiState = active === 'review' || active === 'settings' || active === 'today' || active === 'week' || active === 'tasks' || active === 'courses' || active === 'materials' ? active : 'today'
 
-  return <div className="app-shell">
+  return <div className={`app-shell ${sidebarCollapsed ? 'sidebar-collapsed' : ''}`}>
     <ShanHaiBackground state={backgroundState} emphasis={toast.includes('临时任务') ? 'warm' : 'none'} />
     <aside className={`sidebar ${mobileOpen ? 'mobile-open' : ''}`}>
-      <div className="brand"><span className="brand-mark"><Sparkles size={16} /></span><span>知行</span><span className="brand-sub">STUDY OS</span></div>
-      <button className="profile profile-button" onClick={() => setShowProfileModal(true)} title="编辑昵称和头像"><Avatar profile={profile} className="avatar" /><div><strong>{profile.displayName}</strong><span>本科 · 计算机科学</span></div><MoreHorizontal size={17} className="muted-icon" /></button>
-      <button className="nav-item schedule-import-nav" onClick={() => setShowScheduleImport(true)}><CalendarDays size={18} /><span>识别课表</span></button><div className="nav-label">工作台</div>
-      <nav>{navItems.map(item => { const Icon = item.icon; return <button key={item.id} className={`nav-item ${active === item.id ? 'active' : ''}`} onClick={() => { setActive(item.id); setMobileOpen(false) }}><Icon size={18} /><span>{item.label}</span>{item.id === 'today' && <span className="nav-badge">{tasks.filter(task => task.status !== 'done').length}</span>}</button> })}</nav>
-      <div className="nav-label spaced">洞察</div>
-      <button className={`nav-item ${active === 'review' ? 'active' : ''}`} onClick={() => { setActive('review'); setMobileOpen(false) }}><BarChart3 size={18} /><span>学习复盘</span></button>
-      <div className="sidebar-bottom"><div className="streak"><div className="streak-icon"><Flame size={17} /></div><div><strong>连续学习 7 天</strong><span>本周比上周多 2 小时</span></div></div><button className="nav-item" onClick={() => { setActive('settings'); setMobileOpen(false) }}><Settings size={18} /><span>设置</span></button><div className="help"><CircleHelp size={16} />帮助与反馈 <span>⌘K</span></div></div>
+      <div className="brand"><span className="brand-mark"><Sparkles size={16} /></span><span className="sidebar-label">知行</span><span className="brand-sub sidebar-label">STUDY OS</span><button className="sidebar-toggle icon-btn" onClick={() => setSidebarCollapsed(value => !value)} aria-label={sidebarCollapsed ? '展开任务栏' : '收起任务栏'}>{sidebarCollapsed ? <PanelLeftOpen size={17} /> : <PanelLeftClose size={17} />}</button></div>
+      <button className="profile profile-button" onClick={() => setShowProfileModal(true)} title="编辑昵称和头像"><Avatar profile={profile} className="avatar" /><div className="sidebar-label"><strong>{profile.displayName}</strong><span>本科 · 计算机科学</span></div><MoreHorizontal size={17} className="muted-icon sidebar-label" /></button>
+      <button className="nav-item schedule-import-nav" onClick={() => setShowScheduleImport(true)}><CalendarDays size={18} /><span className="sidebar-label">识别课表</span></button><div className="nav-label sidebar-label">工作台</div>
+      <nav>{navItems.map(item => { const Icon = item.icon; return <button key={item.id} className={`nav-item ${active === item.id ? 'active' : ''}`} onClick={() => { setActive(item.id); setMobileOpen(false) }}><Icon size={18} /><span className="sidebar-label">{item.label}</span>{item.id === 'today' && <span className="nav-badge">{tasks.filter(task => task.status !== 'done').length}</span>}</button> })}</nav>
+      <div className="nav-label spaced sidebar-label">洞察</div>
+      <button className={`nav-item ${active === 'review' ? 'active' : ''}`} onClick={() => { setActive('review'); setMobileOpen(false) }}><BarChart3 size={18} /><span className="sidebar-label">学习复盘</span></button>
+      <div className="sidebar-bottom"><div className="streak"><div className="streak-icon"><Flame size={17} /></div><div className="sidebar-label"><strong>连续学习 7 天</strong><span>本周比上周多 2 小时</span></div></div><button className="nav-item" onClick={() => { setActive('settings'); setMobileOpen(false) }}><Settings size={18} /><span className="sidebar-label">设置</span></button><div className="help sidebar-label"><CircleHelp size={16} />帮助与反馈 <span>⌘K</span></div></div>
     </aside>
     <main className="main-content">
       <header className="topbar"><button className="mobile-menu" onClick={() => setMobileOpen(open => !open)}><Menu size={20} /></button><div className="breadcrumbs"><span>工作台</span><ChevronRight size={14} /><strong>{navItems.find(n => n.id === active)?.label || (active === 'review' ? '学习复盘' : '设置')}</strong></div><div className="top-actions"><span className={`data-mode ${dataSource}`} title={dataError || undefined}>{dataSource === 'supabase' ? '云端数据' : '本地数据'}{loading ? ' · 加载中' : ''}</span><div className="search"><Search size={16} /><input placeholder="搜索任务、课程..." /><kbd>⌘ K</kbd></div><button className="icon-btn"><AlarmClock size={18} /></button><Avatar profile={profile} className="top-avatar" /></div></header>
