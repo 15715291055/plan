@@ -1,6 +1,6 @@
 # 知行 · 智能学习计划
 
-第一版演示采用 Vite + React + TypeScript，完成“今日计划 → 临时任务 → 专注计时 → 周计划查看”的前端闭环。当前数据使用浏览器 `localStorage`，便于在没有后端服务时体验产品流程。
+项目采用 Vite + React + TypeScript。当前已覆盖“任务/课程 CRUD → 可用时间与固定课程 → 自动排程 → 专注计时与学习记录 → 资料上传与文本分析 → AI 任务确认”的闭环。
 
 ## 本地运行
 
@@ -18,7 +18,7 @@ npm run dev
 npm run build
 ```
 
-后续接入 DeepSeek 时，可直接在数据层旁新增 API hooks，保留现有页面组件与交互结构。
+`npm run typecheck` 执行 TypeScript 检查，`npm run lint` 会先检查类型并扫描源码中的服务端密钥误提交，`npm test` 执行无外部依赖的契约冒烟测试。
 
 ## 接入 Supabase
 
@@ -29,4 +29,25 @@ VITE_SUPABASE_URL=https://your-project.supabase.co
 VITE_SUPABASE_ANON_KEY=your-anon-key
 ```
 
-在 Supabase SQL Editor 中执行 [`supabase/schema.sql`](supabase/schema.sql)，它会创建课程、任务、可用时间、固定课程、计划、资料、学习记录和每周输入表，并为用户数据启用 RLS。当前页面已经接通任务状态更新、任务新增/编辑/删除、课程新增/删除和云端资料读取；登录表单与文件 Storage 上传会在下一阶段接入。
+在 Supabase SQL Editor 中执行 [`supabase/schema.sql`](supabase/schema.sql)，它会创建课程、任务、可用时间、固定课程、计划、资料、学习记录、每周输入和用户偏好表，并为用户数据启用 RLS；同时创建私有 `materials` Storage bucket。
+
+前端只需要在本地 `.env` 或 `.env.local` 中配置以下变量（这些文件已被 `.gitignore` 忽略，不能提交到 GitHub）：
+
+```env
+VITE_SUPABASE_URL=https://your-project.supabase.co
+VITE_SUPABASE_ANON_KEY=your-anon-key
+DEEPSEEK_BASE_URL=https://api.deepseek.com
+DEEPSEEK_MODEL=deepseek-chat
+```
+
+DeepSeek API Key 不放在 `.env`、Vercel 环境变量或数据库中。每位用户登录后，在“设置 → DeepSeek API Key”中自行填写；密钥只存在当前页面的 React 内存，调用 `/api/analyze-weekly-content` 或 `/api/analyze-material` 时通过请求头发送，刷新页面后需要重新填写。API 路由不会记录或持久化该密钥。
+
+### 云端数据验收
+
+1. 在 Supabase SQL Editor 执行 schema，并在 Authentication → Providers 中开启 Email。
+2. 将 `VITE_SUPABASE_URL` 和 `VITE_SUPABASE_ANON_KEY` 配置到 Vercel 的 Production、Preview、Development 环境后重新部署。
+3. 注册账户（若开启邮箱确认，先点击确认邮件再登录），在“设置”中添加可用时间和固定课程。
+4. 新建课程和任务，点击“重新排程”，刷新页面确认数据仍存在；再用第二个账户确认看不到第一个账户的数据。
+5. 上传 PDF/DOCX/PPTX，填写自己的 DeepSeek Key，等待“待确认”，确认任务后检查任务库和周计划。
+
+服务端只读取 `DEEPSEEK_BASE_URL` 与 `DEEPSEEK_MODEL` 这类非敏感配置。不要在 `.env`、日志、截图或提交记录中放入 DeepSeek Key、Supabase service-role key 或其他用户密钥。

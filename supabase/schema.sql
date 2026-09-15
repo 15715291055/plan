@@ -108,6 +108,14 @@ create table if not exists public.weekly_inputs (
   created_at timestamptz not null default now()
 );
 
+create table if not exists public.user_preferences (
+  user_id uuid primary key references auth.users(id) on delete cascade default auth.uid(),
+  default_block_minutes smallint not null default 50 check (default_block_minutes in (25, 50, 90)),
+  buffer_ratio numeric(4,3) not null default 0.15 check (buffer_ratio between 0 and 0.3),
+  auto_log boolean not null default true,
+  updated_at timestamptz not null default now()
+);
+
 alter table public.courses enable row level security;
 alter table public.tasks enable row level security;
 alter table public.availability_rules enable row level security;
@@ -117,11 +125,12 @@ alter table public.schedule_items enable row level security;
 alter table public.materials enable row level security;
 alter table public.study_logs enable row level security;
 alter table public.weekly_inputs enable row level security;
+alter table public.user_preferences enable row level security;
 
 do $$
 declare t text;
 begin
-  foreach t in array array['courses','tasks','availability_rules','fixed_events','schedules','materials','study_logs','weekly_inputs'] loop
+  foreach t in array array['courses','tasks','availability_rules','fixed_events','schedules','materials','study_logs','weekly_inputs','user_preferences'] loop
     execute format('drop policy if exists "owner_select_%1$s" on public.%1$s', t);
     execute format('drop policy if exists "owner_insert_%1$s" on public.%1$s', t);
     execute format('drop policy if exists "owner_update_%1$s" on public.%1$s', t);
@@ -145,3 +154,37 @@ create policy "owner_delete_schedule_items" on public.schedule_items for delete 
 create index if not exists tasks_user_deadline_idx on public.tasks(user_id, deadline);
 create index if not exists schedule_items_task_idx on public.schedule_items(task_id);
 create index if not exists study_logs_task_idx on public.study_logs(task_id);
+
+-- Private material bucket. Files are stored under <auth.uid()>/<filename>.
+insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+values (
+  'materials',
+  'materials',
+  false,
+  52428800,
+  array[
+    'application/pdf',
+    'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    'image/jpeg',
+    'image/png'
+  ]
+)
+on conflict (id) do update set
+  public = excluded.public,
+  file_size_limit = excluded.file_size_limit,
+  allowed_mime_types = excluded.allowed_mime_types;
+
+drop policy if exists "owner_select_material_objects" on storage.objects;
+drop policy if exists "owner_insert_material_objects" on storage.objects;
+drop policy if exists "owner_update_material_objects" on storage.objects;
+drop policy if exists "owner_delete_material_objects" on storage.objects;
+create policy "owner_select_material_objects" on storage.objects for select to authenticated
+using (bucket_id = 'materials' and (storage.foldername(name))[1] = auth.uid()::text);
+create policy "owner_insert_material_objects" on storage.objects for insert to authenticated
+with check (bucket_id = 'materials' and (storage.foldername(name))[1] = auth.uid()::text);
+create policy "owner_update_material_objects" on storage.objects for update to authenticated
+using (bucket_id = 'materials' and (storage.foldername(name))[1] = auth.uid()::text)
+with check (bucket_id = 'materials' and (storage.foldername(name))[1] = auth.uid()::text);
+create policy "owner_delete_material_objects" on storage.objects for delete to authenticated
+using (bucket_id = 'materials' and (storage.foldername(name))[1] = auth.uid()::text);

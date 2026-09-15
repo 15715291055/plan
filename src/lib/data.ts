@@ -38,6 +38,7 @@ export type WorkspaceData = {
   scheduleItems: ScheduleItem[]
   materials: Material[]
   studyLogs: StudyLog[]
+  preferences: UserPreferences
   source: 'supabase' | 'local'
   error?: string
 }
@@ -45,8 +46,27 @@ export type WorkspaceData = {
 export type AvailabilityRule = { id: string; weekday: number; startTime: string; endTime: string }
 export type FixedEvent = { id: string; title: string; startTime: string; endTime: string; recurrenceRule?: string }
 export type ScheduleItem = { id: string; taskId: string; startTime: string; endTime: string; locked: boolean; status: string }
-export type Material = { id: string; fileName: string; fileType: string; fileSize?: number; status: string; course?: string; createdAt: string }
+export type MaterialTask = { title: string; estimated_minutes: number; difficulty: number; task_type: string }
+export type MaterialAnalysis = { chapters: string[]; knowledge_points: string[]; tasks: MaterialTask[]; summary: string }
+export type Material = { id: string; fileName: string; fileType: string; fileSize?: number; status: string; course?: string; createdAt: string; storagePath?: string; analysisResult?: MaterialAnalysis }
 export type StudyLog = { id: string; taskId: string; plannedMinutes?: number; actualMinutes?: number; quality?: number; completedAt?: string }
+export type UserPreferences = { defaultBlockMinutes: 25 | 50 | 90; bufferRatio: number; autoLog: boolean }
+
+export type ScheduleInput = {
+  reason?: string
+  items: Array<{ taskId: string; startTime: string; endTime: string; locked?: boolean; status?: string }>
+}
+
+export type TaskDraft = {
+  title: string
+  course: string
+  deadline?: string | null
+  difficulty?: number
+  estimated_minutes: number
+  task_type?: string
+  confidence?: number
+  priority?: number
+}
 
 const taskInputSchema = z.object({
   title: z.string().trim().min(1, '任务名称不能为空'),
@@ -55,6 +75,7 @@ const taskInputSchema = z.object({
 })
 
 const courseColors = ['#2673e8', '#e47735', '#2a9b83', '#d84d78', '#8d68c3', '#b38a32']
+export const defaultPreferences: UserPreferences = { defaultBlockMinutes: 50, bufferRatio: 0.15, autoLog: true }
 
 export const demoCourses: Course[] = [
   { id: 'course-data-structure', name: '数据结构', code: 'CS201', color: '#2673e8', progress: 68 },
@@ -116,6 +137,70 @@ function localCourses(): Course[] {
   } catch { return demoCourses }
 }
 
+function localAvailability(): AvailabilityRule[] {
+  try {
+    const raw = localStorage.getItem('study-availability')
+    return raw ? JSON.parse(raw) as AvailabilityRule[] : []
+  } catch { return [] }
+}
+
+function localFixedEvents(): FixedEvent[] {
+  try {
+    const raw = localStorage.getItem('study-fixed-events')
+    return raw ? JSON.parse(raw) as FixedEvent[] : []
+  } catch { return [] }
+}
+
+function localScheduleItems(): ScheduleItem[] {
+  try {
+    const raw = localStorage.getItem('study-schedule-items')
+    return raw ? JSON.parse(raw) as ScheduleItem[] : []
+  } catch { return [] }
+}
+
+function localMaterials(): Material[] {
+  try {
+    const raw = localStorage.getItem('study-materials')
+    return raw ? JSON.parse(raw) as Material[] : []
+  } catch { return [] }
+}
+
+function localStudyLogs(): StudyLog[] {
+  try {
+    const raw = localStorage.getItem('study-logs')
+    return raw ? JSON.parse(raw) as StudyLog[] : []
+  } catch { return [] }
+}
+
+function localPreferences(): UserPreferences {
+  try {
+    const raw = localStorage.getItem('study-preferences')
+    if (!raw) return defaultPreferences
+    const parsed = JSON.parse(raw) as Partial<UserPreferences>
+    const block = Number(parsed.defaultBlockMinutes)
+    const buffer = Number(parsed.bufferRatio)
+    return {
+      defaultBlockMinutes: block === 25 || block === 90 ? block : 50,
+      bufferRatio: Number.isFinite(buffer) ? Math.min(Math.max(buffer, 0), 0.3) : defaultPreferences.bufferRatio,
+      autoLog: parsed.autoLog !== false,
+    }
+  } catch { return defaultPreferences }
+}
+
+function localWorkspace(): WorkspaceData {
+  return {
+    tasks: localTasks(),
+    courses: localCourses(),
+    availability: localAvailability(),
+    fixedEvents: localFixedEvents(),
+    scheduleItems: localScheduleItems(),
+    materials: localMaterials(),
+    studyLogs: localStudyLogs(),
+    preferences: localPreferences(),
+    source: 'local',
+  }
+}
+
 function formatDeadline(value: string | null): string {
   if (!value) return '未设置'
   const date = new Date(value)
@@ -149,40 +234,48 @@ async function currentUserId(client: SupabaseClient): Promise<string | null> {
 }
 
 export async function loadWorkspace(): Promise<WorkspaceData> {
-  if (!supabase) return { tasks: localTasks(), courses: localCourses(), availability: [], fixedEvents: [], scheduleItems: [], materials: [], studyLogs: [], source: 'local' }
+  if (!supabase) return localWorkspace()
   const userId = await currentUserId(supabase)
-  if (!userId) return { tasks: localTasks(), courses: localCourses(), availability: [], fixedEvents: [], scheduleItems: [], materials: [], studyLogs: [], source: 'local', error: 'Supabase 已配置，但当前没有登录用户，暂时使用本地数据。' }
-  const [courseResult, taskResult, availabilityResult, fixedResult, scheduleResult, materialResult, logResult] = await Promise.all([
+  if (!userId) return { ...localWorkspace(), error: 'Supabase 已配置，但当前没有登录用户，暂时使用本地数据。' }
+  const [courseResult, taskResult, availabilityResult, fixedResult, scheduleResult, materialResult, logResult, preferencesResult] = await Promise.all([
     supabase.from('courses').select('*').order('created_at'),
     supabase.from('tasks').select('*').order('deadline', { ascending: true, nullsFirst: false }),
     supabase.from('availability_rules').select('*').order('weekday'),
     supabase.from('fixed_events').select('*').order('start_time'),
     supabase.from('schedule_items').select('id,task_id,start_time,end_time,locked,status,schedules!inner(is_active)').eq('schedules.is_active', true),
-    supabase.from('materials').select('id,file_name,file_type,file_size,status,created_at,courses(name)').order('created_at', { ascending: false }),
+    supabase.from('materials').select('id,file_name,file_type,file_size,status,storage_path,analysis_result,created_at,courses(name)').order('created_at', { ascending: false }),
     supabase.from('study_logs').select('id,task_id,planned_minutes,actual_minutes,quality,completed_at').order('completed_at', { ascending: false }),
+    supabase.from('user_preferences').select('default_block_minutes,buffer_ratio,auto_log').maybeSingle(),
   ])
   const firstError = [courseResult, taskResult, availabilityResult, fixedResult, scheduleResult, materialResult, logResult].find(result => result.error)?.error
-  if (firstError) return { tasks: localTasks(), courses: localCourses(), availability: [], fixedEvents: [], scheduleItems: [], materials: [], studyLogs: [], source: 'local', error: `数据库读取失败：${firstError.message}` }
+  if (firstError) return { ...localWorkspace(), error: `数据库读取失败：${firstError.message}` }
   const courses: Course[] = (courseResult.data ?? []).map(row => ({ id: row.id, name: row.name, code: row.code ?? undefined, color: row.color ?? courseColors[0], semester: row.semester ?? undefined, description: row.description ?? undefined }))
   const scheduleItems: ScheduleItem[] = (scheduleResult.data ?? []).map(row => ({ id: row.id, taskId: row.task_id, startTime: row.start_time, endTime: row.end_time, locked: Boolean(row.locked), status: row.status ?? 'planned' }))
   return {
     courses, tasks: (taskResult.data ?? []).map(row => mapTask(row, courses, scheduleItems)), source: 'supabase',
     availability: (availabilityResult.data ?? []).map(row => ({ id: row.id, weekday: row.weekday, startTime: row.start_time, endTime: row.end_time })),
     fixedEvents: (fixedResult.data ?? []).map(row => ({ id: row.id, title: row.title, startTime: row.start_time, endTime: row.end_time, recurrenceRule: row.recurrence_rule ?? undefined })),
-    scheduleItems, materials: (materialResult.data ?? []).map(row => ({ id: row.id, fileName: row.file_name, fileType: row.file_type, fileSize: row.file_size ?? undefined, status: row.status, course: (row.courses as { name?: string } | null)?.name, createdAt: row.created_at })),
+    scheduleItems, materials: (materialResult.data ?? []).map(row => ({ id: row.id, fileName: row.file_name, fileType: row.file_type, fileSize: row.file_size ?? undefined, status: row.status, course: (row.courses as { name?: string } | null)?.name, storagePath: row.storage_path ?? undefined, analysisResult: row.analysis_result as MaterialAnalysis | undefined, createdAt: row.created_at })),
     studyLogs: (logResult.data ?? []).map(row => ({ id: row.id, taskId: row.task_id, plannedMinutes: row.planned_minutes ?? undefined, actualMinutes: row.actual_minutes ?? undefined, quality: row.quality ?? undefined, completedAt: row.completed_at ?? undefined })),
+    preferences: preferencesResult.error ? defaultPreferences : {
+      defaultBlockMinutes: Number(preferencesResult.data?.default_block_minutes) === 25 || Number(preferencesResult.data?.default_block_minutes) === 90 ? Number(preferencesResult.data?.default_block_minutes) as 25 | 90 : 50,
+      bufferRatio: Math.min(Math.max(Number(preferencesResult.data?.buffer_ratio ?? defaultPreferences.bufferRatio), 0), 0.3),
+      autoLog: preferencesResult.data?.auto_log !== false,
+    },
   }
 }
 
-export async function createTask(input: { title: string; minutes: number; course: string }): Promise<Task> {
+export async function createTask(input: { title: string; minutes: number; course: string; deadlineIso?: string | null; difficulty?: number; priority?: number; type?: string; source?: 'manual' | 'weekly_input' | 'material' | 'temporary' }): Promise<Task> {
   const parsed = taskInputSchema.parse(input)
-  const localTask: Task = { id: `local-${Date.now()}`, title: parsed.title, course: parsed.course, color: '#2673e8', deadline: '今天 22:00', minutes: parsed.minutes, priority: 70, difficulty: '中等', status: 'todo', type: '临时任务', slot: '16:10', source: 'temporary' }
+  const localCourse = localCourses().find(course => course.name === parsed.course)
+  const localTask: Task = { id: `local-${Date.now()}`, title: parsed.title, course: parsed.course, courseId: localCourse?.id, color: localCourse?.color ?? '#2673e8', deadline: formatDeadline(input.deadlineIso ?? null), deadlineIso: input.deadlineIso ?? undefined, minutes: parsed.minutes, priority: input.priority ?? 70, difficulty: difficultyLabel(input.difficulty ?? 3), status: 'todo', type: input.type ?? '临时任务', slot: input.source === 'weekly_input' ? undefined : '16:10', source: input.source ?? 'temporary' }
   if (!supabase || !(await currentUserId(supabase))) return localTask
   const courseResult = await supabase.from('courses').select('id,color').eq('name', parsed.course).maybeSingle()
   if (courseResult.error) throw courseResult.error
-  const { data, error } = await supabase.from('tasks').insert({ title: parsed.title, estimated_minutes: parsed.minutes, course_id: courseResult.data?.id ?? null, task_type: 'temporary', status: 'todo', source: 'temporary', priority: 70, difficulty: 3 }).select('*').single()
+  const { data, error } = await supabase.from('tasks').insert({ title: parsed.title, estimated_minutes: parsed.minutes, course_id: courseResult.data?.id ?? null, deadline: input.deadlineIso ?? null, task_type: input.type ?? 'temporary', status: 'todo', source: input.source ?? 'temporary', priority: input.priority ?? 70, difficulty: input.difficulty ?? 3 }).select('*').single()
   if (error) throw error
-  return mapTask(data, localCourses(), [])
+  const course = courseResult.data ? [{ id: courseResult.data.id, name: parsed.course, color: courseResult.data.color ?? '#2673e8' }] : []
+  return mapTask(data, course, [])
 }
 
 export async function updateTaskStatus(id: string, status: TaskStatus): Promise<void> {
@@ -191,12 +284,12 @@ export async function updateTaskStatus(id: string, status: TaskStatus): Promise<
   if (error) throw error
 }
 
-export async function updateTask(id: string, input: { title: string; minutes: number; course: string }): Promise<void> {
+export async function updateTask(id: string, input: { title: string; minutes: number; course: string; deadlineIso?: string | null; difficulty?: number; type?: string }): Promise<void> {
   const parsed = taskInputSchema.parse(input)
   if (!supabase || id.startsWith('local-') || !(await currentUserId(supabase))) return
   const courseResult = await supabase.from('courses').select('id').eq('name', parsed.course).maybeSingle()
   if (courseResult.error) throw courseResult.error
-  const { error } = await supabase.from('tasks').update({ title: parsed.title, estimated_minutes: parsed.minutes, course_id: courseResult.data?.id ?? null, updated_at: new Date().toISOString() }).eq('id', id)
+  const { error } = await supabase.from('tasks').update({ title: parsed.title, estimated_minutes: parsed.minutes, course_id: courseResult.data?.id ?? null, deadline: input.deadlineIso ?? null, difficulty: input.difficulty ?? null, task_type: input.type ?? 'study', updated_at: new Date().toISOString() }).eq('id', id)
   if (error) throw error
 }
 
@@ -228,8 +321,146 @@ export async function updateCourse(id: string, input: { name: string; color?: st
   if (error) throw error
 }
 
-export function persistLocal(tasks: Task[], courses: Course[]) {
-  if (supabaseConfigured) return
+export async function createAvailabilityRule(input: { weekday: number; startTime: string; endTime: string }): Promise<AvailabilityRule> {
+  const parsed = z.object({ weekday: z.number().int().min(0).max(6), startTime: z.string().min(1), endTime: z.string().min(1) }).parse(input)
+  if (parsed.startTime >= parsed.endTime) throw new Error('结束时间必须晚于开始时间')
+  const local: AvailabilityRule = { id: `local-availability-${Date.now()}`, ...parsed }
+  if (!supabase || !(await currentUserId(supabase))) return local
+  const { data, error } = await supabase.from('availability_rules').insert({ weekday: parsed.weekday, start_time: parsed.startTime, end_time: parsed.endTime }).select('*').single()
+  if (error) throw error
+  return { id: data.id, weekday: data.weekday, startTime: data.start_time, endTime: data.end_time }
+}
+
+export async function updateAvailabilityRule(id: string, input: { weekday: number; startTime: string; endTime: string }): Promise<void> {
+  const parsed = z.object({ weekday: z.number().int().min(0).max(6), startTime: z.string().min(1), endTime: z.string().min(1) }).parse(input)
+  if (parsed.startTime >= parsed.endTime) throw new Error('结束时间必须晚于开始时间')
+  if (!supabase || id.startsWith('local-') || !(await currentUserId(supabase))) return
+  const { error } = await supabase.from('availability_rules').update({ weekday: parsed.weekday, start_time: parsed.startTime, end_time: parsed.endTime }).eq('id', id)
+  if (error) throw error
+}
+
+export async function deleteAvailabilityRule(id: string): Promise<void> {
+  if (!supabase || id.startsWith('local-') || !(await currentUserId(supabase))) return
+  const { error } = await supabase.from('availability_rules').delete().eq('id', id)
+  if (error) throw error
+}
+
+export async function createFixedEvent(input: { title: string; startTime: string; endTime: string; recurrenceRule?: string }): Promise<FixedEvent> {
+  const parsed = z.object({ title: z.string().trim().min(1), startTime: z.string().min(1), endTime: z.string().min(1), recurrenceRule: z.string().optional() }).parse(input)
+  if (new Date(parsed.startTime) >= new Date(parsed.endTime)) throw new Error('结束时间必须晚于开始时间')
+  const local: FixedEvent = { id: `local-fixed-${Date.now()}`, ...parsed }
+  if (!supabase || !(await currentUserId(supabase))) return local
+  const { data, error } = await supabase.from('fixed_events').insert({ title: parsed.title, start_time: parsed.startTime, end_time: parsed.endTime, recurrence_rule: parsed.recurrenceRule ?? null }).select('*').single()
+  if (error) throw error
+  return { id: data.id, title: data.title, startTime: data.start_time, endTime: data.end_time, recurrenceRule: data.recurrence_rule ?? undefined }
+}
+
+export async function updateFixedEvent(id: string, input: { title: string; startTime: string; endTime: string; recurrenceRule?: string }): Promise<void> {
+  const parsed = z.object({ title: z.string().trim().min(1), startTime: z.string().min(1), endTime: z.string().min(1), recurrenceRule: z.string().optional() }).parse(input)
+  if (new Date(parsed.startTime) >= new Date(parsed.endTime)) throw new Error('结束时间必须晚于开始时间')
+  if (!supabase || id.startsWith('local-') || !(await currentUserId(supabase))) return
+  const { error } = await supabase.from('fixed_events').update({ title: parsed.title, start_time: parsed.startTime, end_time: parsed.endTime, recurrence_rule: parsed.recurrenceRule ?? null }).eq('id', id)
+  if (error) throw error
+}
+
+export async function deleteFixedEvent(id: string): Promise<void> {
+  if (!supabase || id.startsWith('local-') || !(await currentUserId(supabase))) return
+  const { error } = await supabase.from('fixed_events').delete().eq('id', id)
+  if (error) throw error
+}
+
+export async function createStudyLog(input: { taskId: string; plannedMinutes?: number; actualMinutes?: number; quality?: number; completedAt?: string }): Promise<StudyLog> {
+  const parsed = z.object({ taskId: z.string().min(1), plannedMinutes: z.number().int().positive().optional(), actualMinutes: z.number().int().positive().optional(), quality: z.number().int().min(1).max(5).optional(), completedAt: z.string().optional() }).parse(input)
+  const local: StudyLog = { id: `local-log-${Date.now()}`, ...parsed }
+  if (!supabase || !(await currentUserId(supabase))) return local
+  const { data, error } = await supabase.from('study_logs').insert({ task_id: parsed.taskId, planned_minutes: parsed.plannedMinutes ?? null, actual_minutes: parsed.actualMinutes ?? null, quality: parsed.quality ?? null, completed_at: parsed.completedAt ?? new Date().toISOString() }).select('*').single()
+  if (error) throw error
+  return { id: data.id, taskId: data.task_id, plannedMinutes: data.planned_minutes ?? undefined, actualMinutes: data.actual_minutes ?? undefined, quality: data.quality ?? undefined, completedAt: data.completed_at ?? undefined }
+}
+
+export async function saveSchedule(input: ScheduleInput): Promise<{ id: string; items: ScheduleItem[] }> {
+  const parsed = z.object({ reason: z.string().optional(), items: z.array(z.object({ taskId: z.string().min(1), startTime: z.string().min(1), endTime: z.string().min(1), locked: z.boolean().optional(), status: z.string().optional() })) }).parse(input)
+  if (!supabase || !(await currentUserId(supabase))) {
+    const items = parsed.items.map((item, index) => ({ id: `local-schedule-item-${Date.now()}-${index}`, taskId: item.taskId, startTime: item.startTime, endTime: item.endTime, locked: item.locked ?? false, status: item.status ?? 'planned' }))
+    return { id: `local-schedule-${Date.now()}`, items }
+  }
+  const { data: schedule, error: scheduleError } = await supabase.from('schedules').insert({ reason: parsed.reason ?? null, is_active: false }).select('id').single()
+  if (scheduleError) throw scheduleError
+  let rows: Array<{ id: string; task_id: string; start_time: string; end_time: string; locked: boolean; status: string }> = []
+  if (parsed.items.length > 0) {
+    const { data, error: itemError } = await supabase.from('schedule_items').insert(parsed.items.map(item => ({ schedule_id: schedule.id, task_id: item.taskId, start_time: item.startTime, end_time: item.endTime, locked: item.locked ?? false, status: item.status ?? 'planned' }))).select('*')
+    if (itemError) throw itemError
+    rows = data ?? []
+  }
+  const { error: previousError } = await supabase.from('schedules').update({ is_active: false }).eq('is_active', true).neq('id', schedule.id)
+  if (previousError) throw previousError
+  const { error: activateError } = await supabase.from('schedules').update({ is_active: true }).eq('id', schedule.id)
+  if (activateError) throw activateError
+  return { id: schedule.id, items: rows.map(row => ({ id: row.id, taskId: row.task_id, startTime: row.start_time, endTime: row.end_time, locked: Boolean(row.locked), status: row.status })) }
+}
+
+const allowedMaterialTypes = new Set(['application/pdf', 'application/vnd.openxmlformats-officedocument.presentationml.presentation', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'image/jpeg', 'image/png'])
+
+export async function uploadMaterial(file: File, courseId?: string): Promise<Material> {
+  if (file.size > 50 * 1024 * 1024) throw new Error('文件不能超过 50MB')
+  if (!allowedMaterialTypes.has(file.type)) throw new Error('仅支持 PDF、PPTX、DOCX、JPG、PNG 文件')
+  const local: Material = { id: `local-material-${Date.now()}`, fileName: file.name, fileType: file.type, fileSize: file.size, status: 'queued', createdAt: new Date().toISOString() }
+  if (!supabase || !(await currentUserId(supabase))) return local
+  const userId = await currentUserId(supabase)
+  if (!userId) return local
+  const storagePath = `${userId}/${Date.now()}-${file.name.replace(/[^a-zA-Z0-9._-]/g, '_')}`
+  const upload = await supabase.storage.from('materials').upload(storagePath, file, { upsert: false, contentType: file.type })
+  if (upload.error) throw upload.error
+  const { data, error } = await supabase.from('materials').insert({ course_id: courseId ?? null, file_name: file.name, file_type: file.type, file_size: file.size, storage_path: storagePath, status: 'queued' }).select('id,file_name,file_type,file_size,status,created_at,courses(name)').single()
+  if (error) { await supabase.storage.from('materials').remove([storagePath]); throw error }
+  return { id: data.id, fileName: data.file_name, fileType: data.file_type, fileSize: data.file_size ?? undefined, status: data.status, course: (data.courses as { name?: string } | null)?.name, createdAt: data.created_at }
+}
+
+export async function updateMaterialAnalysis(id: string, status: string, analysisResult?: unknown): Promise<void> {
+  const parsedStatus = z.enum(['queued', 'processing', 'ready', 'needs_review', 'failed']).parse(status)
+  if (!supabase || id.startsWith('local-') || !(await currentUserId(supabase))) return
+  const { error } = await supabase.from('materials').update({ status: parsedStatus, analysis_result: analysisResult ?? null }).eq('id', id)
+  if (error) throw error
+}
+
+export async function deleteMaterial(material: Material): Promise<void> {
+  if (!supabase || material.id.startsWith('local-') || !(await currentUserId(supabase))) return
+  if (material.storagePath) {
+    const { error } = await supabase.storage.from('materials').remove([material.storagePath])
+    if (error) throw error
+  }
+  const { error } = await supabase.from('materials').delete().eq('id', material.id)
+  if (error) throw error
+}
+
+export async function savePreferences(input: UserPreferences): Promise<UserPreferences> {
+  const parsed = z.object({
+    defaultBlockMinutes: z.union([z.literal(25), z.literal(50), z.literal(90)]),
+    bufferRatio: z.number().min(0).max(0.3),
+    autoLog: z.boolean(),
+  }).parse(input)
+  if (!supabase || !(await currentUserId(supabase))) return parsed
+  const { data, error } = await supabase.from('user_preferences').upsert({ default_block_minutes: parsed.defaultBlockMinutes, buffer_ratio: parsed.bufferRatio, auto_log: parsed.autoLog }, { onConflict: 'user_id' }).select('default_block_minutes,buffer_ratio,auto_log').single()
+  if (error) throw error
+  return { defaultBlockMinutes: data.default_block_minutes, bufferRatio: Number(data.buffer_ratio), autoLog: data.auto_log }
+}
+
+export async function saveWeeklyInput(input: { weekStart: string; rawText: string; courseId?: string; materialIds?: string[] }): Promise<void> {
+  const parsed = z.object({ weekStart: z.string().min(1), rawText: z.string().trim().min(1).max(20000), courseId: z.string().optional(), materialIds: z.array(z.string()).optional() }).parse(input)
+  if (!supabase || !(await currentUserId(supabase))) return
+  const { error } = await supabase.from('weekly_inputs').insert({ week_start: parsed.weekStart, raw_text: parsed.rawText, course_id: parsed.courseId ?? null, material_ids: parsed.materialIds ?? [] })
+  if (error) throw error
+}
+
+export function persistLocal(tasks: Task[], courses: Course[], extras?: Pick<WorkspaceData, 'availability' | 'fixedEvents' | 'scheduleItems' | 'materials' | 'studyLogs' | 'preferences'>) {
   localStorage.setItem('study-tasks', JSON.stringify(tasks))
   localStorage.setItem('study-courses', JSON.stringify(courses))
+  if (extras) {
+    localStorage.setItem('study-availability', JSON.stringify(extras.availability))
+    localStorage.setItem('study-fixed-events', JSON.stringify(extras.fixedEvents))
+    localStorage.setItem('study-schedule-items', JSON.stringify(extras.scheduleItems))
+    localStorage.setItem('study-materials', JSON.stringify(extras.materials))
+    localStorage.setItem('study-logs', JSON.stringify(extras.studyLogs))
+    localStorage.setItem('study-preferences', JSON.stringify(extras.preferences))
+  }
 }
