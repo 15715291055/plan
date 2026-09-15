@@ -9,7 +9,22 @@ button { border: 0; cursor: pointer; }
 .sidebar { width: 240px; flex: 0 0 240px; background: #fff; border-right: 1px solid #e9edf2; padding: 24px 14px 18px; display: flex; flex-direction: column; }
 .sidebar { transition: width .22s ease, flex-basis .22s ease, padding .22s ease; overflow: hidden; }
 .brand { position: relative; min-height: 30px; }.sidebar-toggle { margin-left: auto; color: #9aa9b8; }.sidebar-toggle:hover { color: #e6ba70; }
-.sidebar-collapsed .sidebar { width: 72px; flex-basis: 72px; padding-left: 10px; padding-right: 10px; }.sidebar-collapsed .brand { justify-content: center; padding-left: 0; padding-right: 0; }.sidebar-collapsed .brand .sidebar-toggle { position: absolute; top: 37px; left: 18px; margin: 0; }.sidebar-collapsed .brand-mark { margin: 0 auto; }.sidebar-collapsed .profile { justify-content: center; padding-left: 0; padding-right: 0; }.sidebar-collapsed .profile .muted-icon { display: none; }.sidebar-collapsed .nav-label,.sidebar-collapsed .sidebar-label { display: none; }.sidebar-collapsed .nav-item { justify-content: center; padding-left: 0; padding-right: 0; }.sidebar-collapsed .nav-item svg { flex: 0 0 auto; }.sidebar-collapsed .nav-badge { position: absolute; top: 3px; right: 8px; min-width: 16px; height: 16px; font-size: 9px; border-radius: 50%; }.sidebar-collapsed .streak { justify-content: center; padding-left: 0; padding-right: 0; }.sidebar-collapsed .help { justify-content: center; padding-left: 0; padding-right: 0; }.sidebar-collapsed .help svg { margin: 0; }
+.sidebar-collapsed .sidebar { width: 72px; flex-basis: 72px; padding: 18px 10px 16px; }
+.sidebar-collapsed .brand { justify-content: center; min-height: 42px; padding: 0 0 18px; }
+.sidebar-collapsed .brand .sidebar-toggle { position: absolute; top: 46px; left: 20px; margin: 0; z-index: 2; }
+.sidebar-collapsed .brand-mark { margin: 0 auto; }
+.sidebar-collapsed .profile { justify-content: center; width: 52px; height: 52px; margin: 0 auto 28px; padding: 0; }
+.sidebar-collapsed .profile .muted-icon { display: none; }
+.sidebar-collapsed .nav-label,.sidebar-collapsed .sidebar-label { display: none; }
+.sidebar-collapsed nav { gap: 10px; }
+.sidebar-collapsed .nav-item { justify-content: center; width: 52px; height: 52px; margin: 0 auto; padding: 0; border-radius: 14px; }
+.sidebar-collapsed .nav-item svg { flex: 0 0 auto; }
+.sidebar-collapsed .nav-badge { position: absolute; top: -4px; right: -3px; min-width: 20px; height: 20px; font-size: 10px; border-radius: 50%; }
+.sidebar-collapsed .streak { display: none; }
+.sidebar-collapsed .sidebar-bottom { margin-top: auto; }
+.sidebar-collapsed .help { justify-content: center; width: 52px; height: 42px; margin: 0 auto; padding: 0; border-radius: 12px; }
+.sidebar-collapsed .help span { display: none; }
+.sidebar-collapsed .help svg { margin: 0; }
 .brand { display: flex; align-items: center; gap: 9px; padding: 0 12px 25px; font-weight: 700; font-size: 20px; letter-spacing: -.4px; }
 .brand-mark { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 8px; color: #fff; background: #246bdb; box-shadow: 0 3px 9px #246bdb2b; }
 .brand-sub { font-size: 8px; letter-spacing: 1.2px; font-weight: 700; color: #a8b0bd; margin: 5px 0 0 1px; }
