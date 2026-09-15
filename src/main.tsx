@@ -277,7 +277,7 @@ function App() {
       const image = await compressImageForVision(file)
       const response = await fetch('/api/analyze-schedule-image', { method: 'POST', headers: await apiRequestHeaders(), body: JSON.stringify({ image }) })
       const payload = await response.json() as ScheduleImportResult & { error?: string }
-      if (!response.ok) throw new Error(payload.error ?? '课表识别失败')
+      if (!response.ok) { if (response.status === 401) setHasSavedDeepSeekKey(false); throw new Error(payload.error ?? '登录状态已失效，请重新登录后再试') }
       setScheduleImport({ courses: payload.courses ?? [], availability: payload.availability ?? [], notes: payload.notes ?? '' })
       setToast('课表已识别，请确认后写入计划')
     } catch (error) { setToast(error instanceof Error ? error.message : '课表识别失败') }
@@ -287,7 +287,7 @@ function App() {
     try {
       const response = await fetch('/api/analyze-schedule-text', { method: 'POST', headers: await apiRequestHeaders(), body: JSON.stringify({ content }) })
       const payload = await response.json() as ScheduleImportResult & { error?: string }
-      if (!response.ok) throw new Error(payload.error ?? '课表文字解析失败')
+      if (!response.ok) { if (response.status === 401) setHasSavedDeepSeekKey(false); throw new Error(payload.error ?? '登录状态已失效，请重新登录后再试') }
       setScheduleImport({ courses: payload.courses ?? [], availability: payload.availability ?? [], notes: payload.notes ?? '' }); setToast('课表文字已解析，请确认后写入计划')
     } catch (error) { setToast(error instanceof Error ? error.message : '课表文字解析失败') }
   }
@@ -322,7 +322,7 @@ function App() {
         if (text.length >= 20) {
           const response = await fetch('/api/analyze-material', { method: 'POST', headers: await apiRequestHeaders(), body: JSON.stringify({ fileName: file.name, content: text }) })
           const payload = await response.json() as { error?: string; tasks?: Array<{ title: string; estimated_minutes: number; difficulty: number; task_type: string }>; chapters?: string[]; knowledge_points?: string[]; summary?: string }
-          if (!response.ok) throw new Error(payload.error ?? '资料分析失败')
+          if (!response.ok) { if (response.status === 401) setHasSavedDeepSeekKey(false); throw new Error(payload.error ?? '登录状态已失效，请重新登录后再试') }
           const analysis = { chapters: payload.chapters ?? [], knowledge_points: payload.knowledge_points ?? [], tasks: payload.tasks ?? [], summary: payload.summary ?? '' }
           await updateMaterialAnalysis(created.id, 'needs_review', analysis)
           setMaterials(current => current.map(material => material.id === created?.id ? { ...material, status: 'needs_review', analysisResult: analysis } : material))
@@ -387,7 +387,7 @@ function App() {
     try {
       const response = await fetch('/api/analyze-weekly-content', { method: 'POST', headers: await apiRequestHeaders(), body: JSON.stringify({ content, courses: courses.map(course => course.name) }) })
       const payload = await response.json() as { error?: string; tasks?: TaskDraft[] }
-      if (!response.ok || !payload.tasks) throw new Error(payload.error ?? 'AI 分析失败')
+      if (!response.ok || !payload.tasks) { if (response.status === 401) setHasSavedDeepSeekKey(false); throw new Error(payload.error ?? '登录状态已失效，请重新登录后再试') }
       await saveWeeklyInput({ weekStart: new Date().toISOString().slice(0, 10), rawText: content })
       setAiDrafts(payload.tasks); setToast(`AI 已生成 ${payload.tasks.length} 个任务草稿，请确认`)
     } catch (error) { setToast(error instanceof Error ? error.message : 'AI 分析失败，请重试') }

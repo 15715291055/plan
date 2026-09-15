@@ -198,7 +198,10 @@ async function accessToken(): Promise<string> {
 }
 
 export async function apiRequestHeaders(): Promise<HeadersInit> {
-  return { 'Content-Type': 'application/json', Authorization: `Bearer ${await accessToken()}` }
+  if (!supabase) throw new Error('请先配置 Supabase')
+  const refreshed = await supabase.auth.refreshSession()
+  const token = refreshed.data.session?.access_token ?? await accessToken()
+  return { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }
 }
 
 export async function saveDeepSeekKey(value: string): Promise<void> {
