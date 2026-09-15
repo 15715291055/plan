@@ -199,8 +199,12 @@ function App() {
       const nextTasks = [...tasks, created]
       setTasks(nextTasks)
       setShowAdd(false)
-      await runReplan(strategy, nextTasks)
-      setToast(dataSource === 'supabase' ? '任务已保存到云端并完成排程' : '临时任务已加入，计划已自动重排')
+      try {
+        await runReplan(strategy, nextTasks)
+        setToast(dataSource === 'supabase' ? '任务已保存到云端并完成排程' : '临时任务已加入，计划已自动重排')
+      } catch (error) {
+        setToast(error instanceof Error && error.message.includes('可用时间') ? '任务已添加；当前时段已被课程占用，待有空档后再安排' : '任务已添加，但排程稍后可重试')
+      }
     } catch (error) { setToast(error instanceof Error ? `保存失败：${error.message}` : '保存失败，请重试') }
   }
   async function editTask(id: string, title: string, minutes: number, course: string, deadlineIso?: string | null, difficulty?: number, type?: string) {
