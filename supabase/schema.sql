@@ -123,6 +123,17 @@ create table if not exists public.user_profiles (
   updated_at timestamptz not null default now()
 );
 
+-- API keys are encrypted by the Vercel server before they reach this table.
+-- No client-side RLS policy is created for this table; it is only accessed with
+-- the Supabase service-role key after the server verifies the user's JWT.
+create table if not exists public.user_api_credentials (
+  user_id uuid primary key references auth.users(id) on delete cascade,
+  ciphertext text not null,
+  iv text not null,
+  auth_tag text not null,
+  updated_at timestamptz not null default now()
+);
+
 alter table public.courses enable row level security;
 alter table public.tasks enable row level security;
 alter table public.availability_rules enable row level security;
@@ -134,6 +145,9 @@ alter table public.study_logs enable row level security;
 alter table public.weekly_inputs enable row level security;
 alter table public.user_preferences enable row level security;
 alter table public.user_profiles enable row level security;
+alter table public.user_api_credentials enable row level security;
+
+grant all on table public.user_api_credentials to service_role;
 
 grant select, insert, update, delete on public.user_profiles to authenticated;
 

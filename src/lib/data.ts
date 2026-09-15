@@ -190,6 +190,29 @@ function localPreferences(): UserPreferences {
   } catch { return defaultPreferences }
 }
 
+async function accessToken(): Promise<string> {
+  if (!supabase) throw new Error('请先配置 Supabase')
+  const { data } = await supabase.auth.getSession()
+  if (!data.session?.access_token) throw new Error('请先登录账户')
+  return data.session.access_token
+}
+
+export async function apiRequestHeaders(): Promise<HeadersInit> {
+  return { 'Content-Type': 'application/json', Authorization: `Bearer ${await accessToken()}` }
+}
+
+export async function saveDeepSeekKey(value: string): Promise<void> {
+  const response = await fetch('/api/deepseek-key', { method: 'POST', headers: await apiRequestHeaders(), body: JSON.stringify({ apiKey: value }) })
+  const payload = await response.json() as { error?: string }
+  if (!response.ok) throw new Error(payload.error ?? 'API Key 保存失败')
+}
+
+export async function deleteDeepSeekKey(): Promise<void> {
+  const response = await fetch('/api/deepseek-key', { method: 'DELETE', headers: await apiRequestHeaders() })
+  const payload = await response.json() as { error?: string }
+  if (!response.ok) throw new Error(payload.error ?? 'API Key 删除失败')
+}
+
 function localUserProfile(): UserProfile {
   try {
     const raw = localStorage.getItem('study-user-profile')

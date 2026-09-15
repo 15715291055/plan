@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { resolveDeepSeekKey } from './_deepseek'
 
 const requestSchema = z.object({ content: z.string().trim().min(10).max(20000), courses: z.array(z.string()).max(100).default([]) })
 const taskSchema = z.object({ title: z.string().trim().min(1).max(200), course: z.string().trim().min(1).max(100), deadline: z.string().nullable().optional(), difficulty: z.number().int().min(1).max(5), estimated_minutes: z.number().int().min(5).max(1440), task_type: z.string().trim().min(1).max(50), confidence: z.number().min(0).max(1), priority: z.number().int().min(0).max(100).optional() })
@@ -11,8 +12,8 @@ function jsonFromText(text: string): unknown {
 
 export default async function handler(req: any, res: any) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' })
-  const apiKey = String(req.headers?.['x-deepseek-api-key'] ?? '')
-  if (!apiKey || apiKey.length < 20 || apiKey.length > 300) return res.status(401).json({ error: '请先填写有效的 DeepSeek API Key' })
+  const apiKey = await resolveDeepSeekKey(req)
+  if (!apiKey) return res.status(401).json({ error: '请先登录并在设置中保存 DeepSeek API Key' })
   const parsed = requestSchema.safeParse(req.body)
   if (!parsed.success) return res.status(400).json({ error: '学习内容不能为空，长度需在 10 到 20000 字之间' })
   const baseUrl = String(process.env.DEEPSEEK_BASE_URL ?? 'https://api.deepseek.com').replace(/\/$/, '')

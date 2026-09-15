@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { resolveDeepSeekKey } from './_deepseek'
 
 const requestSchema = z.object({ image: z.string().regex(/^data:image\/(png|jpeg|jpg|webp);base64,/).max(7_000_000) })
 const timeSchema = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/)
@@ -10,8 +11,8 @@ const responseSchema = z.object({
 
 export default async function handler(req: any, res: any) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' })
-  const apiKey = String(req.headers?.['x-deepseek-api-key'] ?? '')
-  if (!apiKey || apiKey.length < 20 || apiKey.length > 300) return res.status(401).json({ error: '请先填写有效的 DeepSeek API Key' })
+  const apiKey = await resolveDeepSeekKey(req)
+  if (!apiKey) return res.status(401).json({ error: '请先登录并在设置中保存 DeepSeek API Key' })
   const parsed = requestSchema.safeParse(req.body)
   if (!parsed.success) return res.status(400).json({ error: '课表图片无效或过大，请重新选择图片' })
   const baseUrl = String(process.env.DEEPSEEK_BASE_URL ?? 'https://api.deepseek.com').replace(/\/$/, '')
