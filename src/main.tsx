@@ -71,6 +71,19 @@ const navItems = [
   { id: 'materials', label: '学习资料', icon: FileText },
 ]
 
+type ScheduleCourseDraft = { weekday: number; title: string; start_time: string; end_time: string }
+type ScheduleAvailabilityDraft = { weekday: number; start_time: string; end_time: string }
+type ScheduleImportResult = { courses: ScheduleCourseDraft[]; availability: ScheduleAvailabilityDraft[]; notes: string }
+
+async function compressImageForVision(file: File): Promise<string> {
+  const image = await new Promise<HTMLImageElement>((resolve, reject) => { const url = URL.createObjectURL(file); const element = new Image(); element.onload = () => { URL.revokeObjectURL(url); resolve(element) }; element.onerror = () => { URL.revokeObjectURL(url); reject(new Error('无法读取课表图片')) }; element.src = url })
+  const scale = Math.min(1, 1800 / Math.max(image.width, image.height))
+  const canvas = document.createElement('canvas'); canvas.width = Math.max(1, Math.round(image.width * scale)); canvas.height = Math.max(1, Math.round(image.height * scale))
+  const context = canvas.getContext('2d'); if (!context) throw new Error('无法处理课表图片')
+  context.drawImage(image, 0, 0, canvas.width, canvas.height)
+  return canvas.toDataURL('image/jpeg', .86)
+}
+
 function Avatar({ profile, className }: { profile: UserProfile; className: string }) {
   const [imageFailed, setImageFailed] = useState(false)
   useEffect(() => setImageFailed(false), [profile.avatarUrl])
@@ -95,6 +108,8 @@ function App() {
   const [showAdd, setShowAdd] = useState(false)
   const [editingTask, setEditingTask] = useState<Task | null>(null)
   const [showCourseModal, setShowCourseModal] = useState(false)
+  const [showScheduleImport, setShowScheduleImport] = useState(false)
+  const [scheduleImport, setScheduleImport] = useState<ScheduleImportResult | null>(null)
   const [showProfileModal, setShowProfileModal] = useState(false)
   const [editingCourse, setEditingCourse] = useState<Course | null>(null)
   const [toast, setToast] = useState('')
@@ -240,6 +255,34 @@ function App() {
       throw error
     }
   }
+  async function analyzeScheduleImage(file: File) {
+    if (!deepSeekKey) { setToast('请先在设置中填写 DeepSeek API Key'); return }
+    if (!file.type.startsWith('image/')) { setToast('请上传 JPG、PNG 或 WebP 格式的课表图片'); return }
+    try {
+      const image = await compressImageForVision(file)
+      const response = await fetch('/api/analyze-schedule-image', { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-deepseek-api-key': deepSeekKey }, body: JSON.stringify({ image }) })
+      const payload = await response.json() as ScheduleImportResult & { error?: string }
+      if (!response.ok) throw new Error(payload.error ?? '课表识别失败')
+      setScheduleImport({ courses: payload.courses ?? [], availability: payload.availability ?? [], notes: payload.notes ?? '' })
+      setToast('课表已识别，请确认后写入计划')
+    } catch (error) { setToast(error instanceof Error ? error.message : '课表识别失败') }
+  }
+  async function confirmScheduleImport(input: ScheduleImportResult) {
+    try {
+      const weekStart = mondayOf(new Date())
+      const importedEvents = await Promise.all(input.courses.map(course => {
+        const start = new Date(weekStart); start.setDate(weekStart.getDate() + ((course.weekday + 6) % 7)); const [startHour, startMinute] = course.start_time.split(':').map(Number); start.setHours(startHour, startMinute, 0, 0)
+        const end = new Date(start); const [endHour, endMinute] = course.end_time.split(':').map(Number); end.setHours(endHour, endMinute, 0, 0)
+        return createFixedEvent({ title: course.title, startTime: start.toISOString(), endTime: end.toISOString(), recurrenceRule: 'weekly' })
+      }))
+      const importedAvailability = await Promise.all(input.availability.map(rule => createAvailabilityRule({ weekday: rule.weekday, startTime: rule.start_time, endTime: rule.end_time })))
+      setFixedEvents(current => [...current, ...importedEvents].sort((a, b) => a.startTime.localeCompare(b.startTime)))
+      setAvailability(current => [...current, ...importedAvailability].sort((a, b) => a.weekday - b.weekday || a.startTime.localeCompare(b.startTime)))
+      setScheduleImport(null); setShowScheduleImport(false)
+      await runReplan('minimal_change', tasks)
+      setToast(`已加入 ${importedEvents.length} 节课程和 ${importedAvailability.length} 个空闲时段，并重新排程`)
+    } catch (error) { setToast(error instanceof Error ? error.message : '写入课表失败，请重试') }
+  }
   async function handleUpload(file: File) {
     let created: Material | null = null
     try {
@@ -347,7 +390,7 @@ function App() {
     <aside className={`sidebar ${mobileOpen ? 'mobile-open' : ''}`}>
       <div className="brand"><span className="brand-mark"><Sparkles size={16} /></span><span>知行</span><span className="brand-sub">STUDY OS</span></div>
       <button className="profile profile-button" onClick={() => setShowProfileModal(true)} title="编辑昵称和头像"><Avatar profile={profile} className="avatar" /><div><strong>{profile.displayName}</strong><span>本科 · 计算机科学</span></div><MoreHorizontal size={17} className="muted-icon" /></button>
-      <div className="nav-label">工作台</div>
+      <button className="nav-item schedule-import-nav" onClick={() => setShowScheduleImport(true)}><CalendarDays size={18} /><span>识别课表</span></button><div className="nav-label">工作台</div>
       <nav>{navItems.map(item => { const Icon = item.icon; return <button key={item.id} className={`nav-item ${active === item.id ? 'active' : ''}`} onClick={() => { setActive(item.id); setMobileOpen(false) }}><Icon size={18} /><span>{item.label}</span>{item.id === 'today' && <span className="nav-badge">{tasks.filter(task => task.status !== 'done').length}</span>}</button> })}</nav>
       <div className="nav-label spaced">洞察</div>
       <button className={`nav-item ${active === 'review' ? 'active' : ''}`} onClick={() => { setActive('review'); setMobileOpen(false) }}><BarChart3 size={18} /><span>学习复盘</span></button>
@@ -364,13 +407,14 @@ function App() {
       {active === 'courses' && <CoursesView courses={courses} onAdd={() => setShowCourseModal(true)} onEdit={setEditingCourse} onDelete={removeCourse} />}
       {active === 'materials' && <MaterialsView materials={materials} onToast={setToast} onUpload={handleUpload} onDelete={removeMaterial} onReview={reviewMaterial} />}
       {active === 'review' && <ReviewView tasks={tasks} studyLogs={studyLogs} />}
-      {active === 'settings' && <SettingsView profile={profile} availability={availability} fixedEvents={fixedEvents} preferences={preferences} deepSeekKey={deepSeekKey} onDeepSeekKeyChange={setDeepSeekKey} onSavePreferences={updatePreferences} onSaveProfile={updateProfile} onAddAvailability={addAvailability} onUpdateAvailability={editAvailability} onDeleteAvailability={removeAvailability} onAddFixedEvent={addFixedEvent} onUpdateFixedEvent={editFixedEvent} onDeleteFixedEvent={removeFixedEvent} onAuthChange={refreshWorkspace} />}
+      {active === 'settings' && <><SettingsView profile={profile} availability={availability} fixedEvents={fixedEvents} preferences={preferences} deepSeekKey={deepSeekKey} onDeepSeekKeyChange={setDeepSeekKey} onSavePreferences={updatePreferences} onSaveProfile={updateProfile} onImportSchedule={() => setShowScheduleImport(true)} onAddAvailability={addAvailability} onUpdateAvailability={editAvailability} onDeleteAvailability={removeAvailability} onAddFixedEvent={addFixedEvent} onUpdateFixedEvent={editFixedEvent} onDeleteFixedEvent={removeFixedEvent} onAuthChange={refreshWorkspace} /><input id="schedule-image-import" hidden type="file" accept="image/png,image/jpeg,image/webp" onChange={event => { const file = event.target.files?.[0]; event.currentTarget.value = ''; if (file) void analyzeScheduleImage(file) }} /></>}
     </main>
     {showAdd && <AddTaskModal courses={courses} onClose={() => setShowAdd(false)} onAdd={addTask} />}
     {editingTask && <AddTaskModal initial={editingTask} courses={courses} onClose={() => setEditingTask(null)} onUpdate={editTask} />}
     {showCourseModal && <CourseModal onClose={() => setShowCourseModal(false)} onAdd={addCourse} />}
     {editingCourse && <CourseModal initial={editingCourse} onClose={() => setEditingCourse(null)} onUpdate={editCourse} />}
     {showProfileModal && <ProfileModal profile={profile} onClose={() => setShowProfileModal(false)} onSave={async input => { await updateProfile(input); setShowProfileModal(false) }} />}
+    {showScheduleImport && <ScheduleImportModal result={scheduleImport} onClose={() => { setShowScheduleImport(false); setScheduleImport(null) }} onAnalyze={analyzeScheduleImage} onConfirm={confirmScheduleImport} />}
     {aiDrafts.length > 0 && <AiDraftModal drafts={aiDrafts} onClose={() => setAiDrafts([])} onConfirm={confirmAiDrafts} />}
     {materialDrafts && <AiDraftModal drafts={materialDrafts.drafts} title={`确认 ${materialDrafts.fileName} 的任务`} onClose={() => setMaterialDrafts(null)} onConfirm={confirmMaterialDrafts} />}
     {toast && <div className="toast"><Check size={16} />{toast}</div>}
@@ -438,7 +482,7 @@ function ReviewView({ tasks, studyLogs }: {tasks:Task[]; studyLogs: StudyLog[]})
   return <div className="page"><div className="page-head compact"><div><div className="eyebrow">数据洞察</div><h1>学习复盘</h1><p className="subhead">看见投入，也看见自己的进步</p></div><button className="button secondary"><CalendarDays size={16} />本周</button></div><div className="review-grid"><div className="review-main panel"><div className="panel-head"><div><h2>学习时长</h2><span className="panel-caption">过去 7 天 · 共 {Math.floor(totalMinutes / 60)} 小时 {totalMinutes % 60} 分</span></div><span className="trend-chip">{recentLogs.length} 次记录</span></div><div className="bars">{['一','二','三','四','五','六','日'].map((d,i)=>{ const target = new Date(Date.now() - (6 - i) * 86400000).toDateString(); const minutes = recentLogs.filter(log => log.completedAt && new Date(log.completedAt).toDateString() === target).reduce((sum, log) => sum + (log.actualMinutes ?? 0), 0); return <div className="bar-col" key={d}><div className="bar" style={{height:`${Math.max(minutes ? 8 : 2, Math.round(minutes / maxDaily * 100))}%`}} /><span>{d}</span></div>})}</div></div><div className="review-side panel"><div className="panel-head"><div><h2>任务完成</h2><span className="panel-caption">当前任务库</span></div><BarChart3 size={17} /></div><div className="big-number">{done}<small> / {tasks.length} 项</small></div><div className="progress-line"><i style={{width:`${completionRate}%`}} /></div><p>{completionRate >= 70 ? '完成率保持良好' : '完成更多任务后，这里会显示趋势'}</p><div className="efficiency"><span>平均单次专注</span><strong>{recentLogs.length ? Math.round(totalMinutes / recentLogs.length) : 0} <small>分钟</small></strong></div></div></div></div>
 }
 
-function SettingsView({ profile, availability, fixedEvents, preferences, deepSeekKey, onDeepSeekKeyChange, onSavePreferences, onSaveProfile, onAddAvailability, onUpdateAvailability, onDeleteAvailability, onAddFixedEvent, onUpdateFixedEvent, onDeleteFixedEvent, onAuthChange }: { profile: UserProfile; availability: AvailabilityRule[]; fixedEvents: FixedEvent[]; preferences: UserPreferences; deepSeekKey: string; onDeepSeekKeyChange:(value:string)=>void; onSavePreferences:(input: UserPreferences)=>Promise<void>; onSaveProfile:(input: UserProfile)=>Promise<void>; onAddAvailability:(input:{weekday:number;startTime:string;endTime:string})=>Promise<void>; onUpdateAvailability:(id:string,input:{weekday:number;startTime:string;endTime:string})=>Promise<void>; onDeleteAvailability:(id:string)=>Promise<void>; onAddFixedEvent:(input:{title:string;startTime:string;endTime:string;recurrenceRule?:string})=>Promise<void>; onUpdateFixedEvent:(id:string,input:{title:string;startTime:string;endTime:string;recurrenceRule?:string})=>Promise<void>; onDeleteFixedEvent:(id:string)=>Promise<void>; onAuthChange:()=>Promise<void> }) {
+function SettingsView({ profile, availability, fixedEvents, preferences, deepSeekKey, onDeepSeekKeyChange, onSavePreferences, onSaveProfile, onImportSchedule, onAddAvailability, onUpdateAvailability, onDeleteAvailability, onAddFixedEvent, onUpdateFixedEvent, onDeleteFixedEvent, onAuthChange }: { profile: UserProfile; availability: AvailabilityRule[]; fixedEvents: FixedEvent[]; preferences: UserPreferences; deepSeekKey: string; onDeepSeekKeyChange:(value:string)=>void; onSavePreferences:(input: UserPreferences)=>Promise<void>; onSaveProfile:(input: UserProfile)=>Promise<void>; onImportSchedule:()=>void; onAddAvailability:(input:{weekday:number;startTime:string;endTime:string})=>Promise<void>; onUpdateAvailability:(id:string,input:{weekday:number;startTime:string;endTime:string})=>Promise<void>; onDeleteAvailability:(id:string)=>Promise<void>; onAddFixedEvent:(input:{title:string;startTime:string;endTime:string;recurrenceRule?:string})=>Promise<void>; onUpdateFixedEvent:(id:string,input:{title:string;startTime:string;endTime:string;recurrenceRule?:string})=>Promise<void>; onDeleteFixedEvent:(id:string)=>Promise<void>; onAuthChange:()=>Promise<void> }) {
   const [tab, setTab] = useState<'preferences'|'fixed'>('preferences')
   const [weekday, setWeekday] = useState(0)
   const [startTime, setStartTime] = useState('18:00')
@@ -475,6 +519,12 @@ function ProfileModal({ profile, onClose, onSave }: { profile: UserProfile; onCl
   const [error, setError] = useState('')
   async function save() { setSaving(true); setError(''); try { await onSave({ displayName, avatarUrl }) } catch (reason) { setError(reason instanceof Error ? reason.message : '保存失败，请重试') } finally { setSaving(false) } }
   return <div className="modal-backdrop" onMouseDown={e => e.target === e.currentTarget && onClose()}><div className="modal profile-modal"><div className="modal-head"><div><span className="eyebrow">个人资料</span><h2>昵称与头像</h2></div><button className="icon-btn" onClick={onClose}><X size={18} /></button></div><div className="profile-preview"><Avatar profile={{ displayName, avatarUrl }} className="profile-preview-avatar" /><p>头像将显示在侧栏与顶部导航中</p></div><label>昵称<input autoFocus maxLength={32} value={displayName} onChange={e => setDisplayName(e.target.value)} placeholder="例如：小林" /></label><label>头像图片链接<input type="url" value={avatarUrl} onChange={e => setAvatarUrl(e.target.value)} placeholder="https://example.com/avatar.jpg" /></label>{error && <p className="auth-message">{error}</p>}<div className="modal-footer"><button className="button secondary" onClick={onClose}>取消</button><button className="button primary" disabled={saving || !displayName.trim()} onClick={() => void save()}><Check size={16} />{saving ? '保存中...' : '保存资料'}</button></div></div></div>
+}
+
+function ScheduleImportModal({ result, onClose, onAnalyze, onConfirm }: { result: ScheduleImportResult | null; onClose: () => void; onAnalyze: (file: File) => Promise<void>; onConfirm: (result: ScheduleImportResult) => Promise<void> }) {
+  const inputRef = useRef<HTMLInputElement>(null)
+  const dayLabels = ['周日', '周一', '周二', '周三', '周四', '周五', '周六']
+  return <div className="modal-backdrop" onMouseDown={event => event.target === event.currentTarget && onClose()}><div className="modal schedule-import-modal"><div className="modal-head"><div><span className="eyebrow">智能导入</span><h2>识别课表图片</h2></div><button className="icon-btn" onClick={onClose}><X size={18} /></button></div>{!result ? <><p className="panel-caption">上传一张清晰的课表截图。图片会压缩后发送给 DeepSeek 视觉模型，不会自动保存原图。</p><button className="upload-zone schedule-upload" onClick={() => inputRef.current?.click()}><Upload size={22} /><strong>选择课表图片</strong><span>支持 JPG、PNG、WebP</span></button><input ref={inputRef} hidden type="file" accept="image/png,image/jpeg,image/webp" onChange={event => { const file = event.target.files?.[0]; event.currentTarget.value = ''; if (file) void onAnalyze(file) }} /></> : <><p className="panel-caption">请检查识别结果。确认后将写入固定课程和可用时间。</p><div className="schedule-result-list"><strong>课程 {result.courses.length} 节</strong>{result.courses.map((course, index) => <div key={`${course.title}-${index}`}><span>{dayLabels[course.weekday]}</span><input value={course.title} onChange={() => undefined} readOnly /><span>{course.start_time} - {course.end_time}</span></div>)}<strong>空闲时间 {result.availability.length} 段</strong>{result.availability.map((rule, index) => <div key={`${rule.weekday}-${index}`}><span>{dayLabels[rule.weekday]}</span><span>{rule.start_time} - {rule.end_time}</span></div>)}</div>{result.notes && <p className="panel-caption">备注：{result.notes}</p>}<div className="modal-footer"><button className="button secondary" onClick={onClose}>取消</button><button className="button primary" onClick={() => void onConfirm(result)}><Check size={16} />确认并排程</button></div></>}</div></div>
 }
 
 function CourseModal({ initial, onClose, onAdd, onUpdate }: { initial?: Course; onClose:()=>void; onAdd?: (name:string, color:string)=>void; onUpdate?: (id:string, name:string, color:string)=>void }) { const [name, setName] = useState(initial?.name ?? ''); const [color, setColor] = useState(initial?.color ?? '#2673e8'); const editing = Boolean(initial); return <div className="modal-backdrop" onMouseDown={e => e.target === e.currentTarget && onClose()}><div className="modal"><div className="modal-head"><div><span className="eyebrow">学期空间</span><h2>{editing ? '修改课程' : '添加课程'}</h2></div><button className="icon-btn" onClick={onClose}><X size={18} /></button></div><label>课程名称<input autoFocus placeholder="例如：概率论" value={name} onChange={e=>setName(e.target.value)} /></label><label>课程颜色<div className="color-picker"><input type="color" value={color} onChange={e=>setColor(e.target.value)} /><span>{color}</span></div></label><div className="modal-footer"><button className="button secondary" onClick={onClose}>取消</button><button className="button primary" disabled={!name.trim()} onClick={()=>editing ? onUpdate?.(initial!.id, name, color) : onAdd?.(name, color)}>{editing ? <Check size={16} /> : <Plus size={16} />}{editing ? '保存修改' : '保存课程'}</button></div></div></div> }

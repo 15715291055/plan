@@ -49,7 +49,16 @@ export function buildSchedule(tasks: Task[], availability: AvailabilityRule[], f
   const blockedByDay = new Map<string, Interval[]>()
   const addBlocked = (interval: Interval) => { const key = interval.start.toISOString().slice(0, 10); blockedByDay.set(key, [...(blockedByDay.get(key) ?? []), interval]) }
   retained.forEach(item => addBlocked({ start: new Date(item.startTime), end: new Date(item.endTime) }))
-  fixedEvents.forEach(event => addBlocked({ start: new Date(event.startTime), end: new Date(event.endTime) }))
+  fixedEvents.forEach(event => {
+    const start = new Date(event.startTime)
+    const end = new Date(event.endTime)
+    if (event.recurrenceRule === 'weekly') {
+      const day = (start.getDay() + 6) % 7
+      const recurringStart = new Date(monday); recurringStart.setDate(monday.getDate() + day); recurringStart.setHours(start.getHours(), start.getMinutes(), 0, 0)
+      const recurringEnd = new Date(recurringStart); recurringEnd.setHours(end.getHours(), end.getMinutes(), 0, 0)
+      addBlocked({ start: recurringStart, end: recurringEnd })
+    } else addBlocked({ start, end })
+  })
 
   const pending = tasks.filter(task => task.status !== 'done' && !retained.some(item => item.taskId === task.id)).sort((a, b) => {
     const da = a.deadlineIso ? new Date(a.deadlineIso).getTime() : Number.MAX_SAFE_INTEGER
