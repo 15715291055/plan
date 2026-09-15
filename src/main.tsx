@@ -148,7 +148,8 @@ function App() {
           workspace.courses = [...workspace.courses, ...createdCourses]
         }
       }
-      setCourses(workspace.courses)`r`n      setMaterials(workspace.materials)
+      setCourses(workspace.courses)
+      setMaterials(workspace.materials)
       setScheduleItems(workspace.scheduleItems)
       setStudyLogs(workspace.studyLogs)
       setPreferences(workspace.preferences)
