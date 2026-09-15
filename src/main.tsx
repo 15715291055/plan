@@ -60,9 +60,10 @@ import { extractMaterialText } from './lib/extract'
 import './styles.css'
 
 const weekDays = ['周一', '周二', '周三', '周四', '周五', '周六', '周日']
+function parseTimeMinutes(value: string): number { const [hours, minutes] = value.split(':').map(Number); return (hours || 0) * 60 + (minutes || 0) }
 function schedulableWindows(unavailable: AvailabilityRule[]): AvailabilityRule[] {
   return Array.from({ length: 7 }, (_, weekday) => {
-    const blocked = unavailable.filter(rule => rule.weekday === weekday).map(rule => [parseMinutes(rule.startTime), parseMinutes(rule.endTime)] as [number, number]).sort((a, b) => a[0] - b[0])
+    const blocked = unavailable.filter(rule => rule.weekday === weekday).map(rule => [parseTimeMinutes(rule.startTime), parseTimeMinutes(rule.endTime)] as [number, number]).sort((a, b) => a[0] - b[0])
     const windows: AvailabilityRule[] = []; let cursor = 0
     for (const [start, end] of blocked) { if (start > cursor) windows.push({ id: `computed-${weekday}-${cursor}`, weekday, startTime: `${String(Math.floor(cursor / 60)).padStart(2, '0')}:${String(cursor % 60).padStart(2, '0')}`, endTime: `${String(Math.floor(start / 60)).padStart(2, '0')}:${String(start % 60).padStart(2, '0')}` }); cursor = Math.max(cursor, end) }
     if (cursor < 1440) windows.push({ id: `computed-${weekday}-${cursor}`, weekday, startTime: `${String(Math.floor(cursor / 60)).padStart(2, '0')}:${String(cursor % 60).padStart(2, '0')}`, endTime: '24:00' })
