@@ -2,7 +2,7 @@ import { motion, useReducedMotion } from 'motion/react'
 
 export type ShanHaiState = 'today' | 'week' | 'tasks' | 'courses' | 'materials' | 'review' | 'settings'
 
-type ShanHaiBackgroundProps = { state: ShanHaiState; emphasis?: 'none' | 'warm' }
+type ShanHaiBackgroundProps = { state: ShanHaiState; emphasis?: 'none' | 'warm'; visualStyle?: 'style-1' | 'style-2' | 'style-3' }
 
 const palette: Record<ShanHaiState, { wash: string; ridge: string; ridgeAlt: string; glow: string }> = {
   today: { wash: '#eaf4fb', ridge: '#9ec4d2', ridgeAlt: '#c1d7d9', glow: '#a5d7dc' },
@@ -14,12 +14,13 @@ const palette: Record<ShanHaiState, { wash: string; ridge: string; ridgeAlt: str
   settings: { wash: '#eff3f5', ridge: '#afc1c8', ridgeAlt: '#cad4d7', glow: '#b8cecb' },
 }
 
-export function ShanHaiBackground({ state, emphasis = 'none' }: ShanHaiBackgroundProps) {
+export function ShanHaiBackground({ state, emphasis = 'none', visualStyle = 'style-1' }: ShanHaiBackgroundProps) {
   const reducedMotion = useReducedMotion()
   const colors = palette[state]
   const warm = emphasis === 'warm'
 
-  return <div className={`shan-hai-background state-${state} ${warm ? 'emphasis-warm' : ''}`} aria-hidden="true" style={{ '--shan-wash': colors.wash, '--shan-ridge': colors.ridge, '--shan-ridge-alt': colors.ridgeAlt, '--shan-glow': colors.glow } as React.CSSProperties}>
+  return <div className={`shan-hai-background state-${state} ${visualStyle} ${warm ? 'emphasis-warm' : ''}`} aria-hidden="true" style={{ '--shan-wash': colors.wash, '--shan-ridge': colors.ridge, '--shan-ridge-alt': colors.ridgeAlt, '--shan-glow': colors.glow } as React.CSSProperties}>
+    {visualStyle === 'style-2' && <><img className="style-two-image" src="/style-2-background.png" alt="" /><div className="style-two-overlay" /></>}
     <div className="shan-hai-wash" />
     <motion.div className="shan-hai-cloud cloud-a" animate={reducedMotion ? undefined : { x: [0, 22, -12, 0], y: [0, -8, 7, 0], opacity: [0.25, 0.38, 0.28, 0.25] }} transition={{ duration: 34, repeat: Infinity, ease: 'easeInOut' }} />
     <motion.div className="shan-hai-cloud cloud-b" animate={reducedMotion ? undefined : { x: [0, -26, 12, 0], y: [0, 10, -5, 0], opacity: [0.18, 0.29, 0.2, 0.18] }} transition={{ duration: 42, repeat: Infinity, ease: 'easeInOut', delay: 2 }} />

@@ -439,7 +439,7 @@ function App() {
   const backgroundState: ShanHaiState = active === 'review' || active === 'settings' || active === 'today' || active === 'week' || active === 'tasks' || active === 'courses' || active === 'materials' ? active : 'today'
 
   return <div className={`app-shell ${sidebarCollapsed ? 'sidebar-collapsed' : ''} ${visualStyle}`}>
-    <ShanHaiBackground state={backgroundState} emphasis={toast.includes('临时任务') ? 'warm' : 'none'} />
+    <ShanHaiBackground state={backgroundState} visualStyle={visualStyle} emphasis={toast.includes('临时任务') ? 'warm' : 'none'} />
     <aside className={`sidebar ${mobileOpen ? 'mobile-open' : ''}`}>
       <div className="brand"><span className="brand-mark"><Sparkles size={16} /></span><span className="sidebar-label">行</span><span className="brand-sub sidebar-label">STUDY OS</span><button className="sidebar-toggle icon-btn" onClick={() => setSidebarCollapsed(value => !value)} aria-label={sidebarCollapsed ? '展开任务栏' : '收起任务栏'}>{sidebarCollapsed ? <PanelLeftOpen size={17} /> : <PanelLeftClose size={17} />}</button></div>
       <button className="profile profile-button" onClick={() => setShowProfileModal(true)} title="编辑昵称和头像"><Avatar profile={profile} className="avatar" /><MoreHorizontal size={17} className="muted-icon sidebar-label" /></button>

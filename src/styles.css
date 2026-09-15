@@ -163,6 +163,10 @@ h1 { color: #162333; font-size: 28px; line-height: 1.2; letter-spacing: -.7px; }
 
 /* ShanHai visual system */
 .shan-hai-background { position: fixed; inset: 0; z-index: 0; overflow: hidden; pointer-events: none; background: #f7f8fa; }
+.style-two-image, .style-two-overlay { position: absolute; inset: 0; width: 100%; height: 100%; }
+.style-two-image { object-fit: cover; filter: saturate(.82) brightness(.78); }
+.style-two-overlay { background: linear-gradient(110deg, rgba(10,20,31,.56), rgba(15,31,47,.2) 48%, rgba(8,18,29,.4)); }
+.shan-hai-background.style-2 .shan-hai-wash, .shan-hai-background.style-2 .shan-hai-cloud, .shan-hai-background.style-2 .shan-hai-ridges { opacity: 0; }
 .shan-hai-wash { position: absolute; inset: 0; background: radial-gradient(ellipse at 26% 7%, var(--shan-wash) 0%, rgba(247,248,250,.55) 38%, rgba(247,248,250,.95) 75%), linear-gradient(130deg, rgba(255,255,255,.74), rgba(239,244,247,.45)); transition: background 900ms ease; }
 .shan-hai-cloud { position: absolute; width: 44vw; height: 20vw; min-width: 350px; min-height: 150px; border-radius: 50%; filter: blur(46px); background: var(--shan-glow); opacity: .24; }
 .cloud-a { top: 4%; left: 18%; }.cloud-b { top: 28%; right: -10%; width: 38vw; height: 16vw; opacity: .16; }
