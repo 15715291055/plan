@@ -116,6 +116,13 @@ create table if not exists public.user_preferences (
   updated_at timestamptz not null default now()
 );
 
+create table if not exists public.user_profiles (
+  user_id uuid primary key references auth.users(id) on delete cascade default auth.uid(),
+  display_name text not null default '学习者' check (char_length(trim(display_name)) between 1 and 32),
+  avatar_url text,
+  updated_at timestamptz not null default now()
+);
+
 alter table public.courses enable row level security;
 alter table public.tasks enable row level security;
 alter table public.availability_rules enable row level security;
@@ -126,11 +133,14 @@ alter table public.materials enable row level security;
 alter table public.study_logs enable row level security;
 alter table public.weekly_inputs enable row level security;
 alter table public.user_preferences enable row level security;
+alter table public.user_profiles enable row level security;
+
+grant select, insert, update, delete on public.user_profiles to authenticated;
 
 do $$
 declare t text;
 begin
-  foreach t in array array['courses','tasks','availability_rules','fixed_events','schedules','materials','study_logs','weekly_inputs','user_preferences'] loop
+  foreach t in array array['courses','tasks','availability_rules','fixed_events','schedules','materials','study_logs','weekly_inputs','user_preferences','user_profiles'] loop
     execute format('drop policy if exists "owner_select_%1$s" on public.%1$s', t);
     execute format('drop policy if exists "owner_insert_%1$s" on public.%1$s', t);
     execute format('drop policy if exists "owner_update_%1$s" on public.%1$s', t);

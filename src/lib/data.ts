@@ -39,6 +39,7 @@ export type WorkspaceData = {
   materials: Material[]
   studyLogs: StudyLog[]
   preferences: UserPreferences
+  profile: UserProfile
   source: 'supabase' | 'local'
   error?: string
 }
@@ -51,6 +52,7 @@ export type MaterialAnalysis = { chapters: string[]; knowledge_points: string[];
 export type Material = { id: string; fileName: string; fileType: string; fileSize?: number; status: string; course?: string; createdAt: string; storagePath?: string; analysisResult?: MaterialAnalysis }
 export type StudyLog = { id: string; taskId: string; plannedMinutes?: number; actualMinutes?: number; quality?: number; completedAt?: string }
 export type UserPreferences = { defaultBlockMinutes: 25 | 50 | 90; bufferRatio: number; autoLog: boolean }
+export type UserProfile = { displayName: string; avatarUrl?: string }
 
 export type ScheduleInput = {
   reason?: string
@@ -76,6 +78,7 @@ const taskInputSchema = z.object({
 
 const courseColors = ['#2673e8', '#e47735', '#2a9b83', '#d84d78', '#8d68c3', '#b38a32']
 export const defaultPreferences: UserPreferences = { defaultBlockMinutes: 50, bufferRatio: 0.15, autoLog: true }
+export const defaultUserProfile: UserProfile = { displayName: '学习者', avatarUrl: '' }
 
 export const demoCourses: Course[] = [
   { id: 'course-data-structure', name: '数据结构', code: 'CS201', color: '#2673e8', progress: 68 },
@@ -187,6 +190,16 @@ function localPreferences(): UserPreferences {
   } catch { return defaultPreferences }
 }
 
+function localUserProfile(): UserProfile {
+  try {
+    const raw = localStorage.getItem('study-user-profile')
+    if (!raw) return defaultUserProfile
+    const parsed = JSON.parse(raw) as Partial<UserProfile>
+    const displayName = typeof parsed.displayName === 'string' ? parsed.displayName.trim().slice(0, 32) : ''
+    return { displayName: displayName || defaultUserProfile.displayName, avatarUrl: typeof parsed.avatarUrl === 'string' ? parsed.avatarUrl.trim() : '' }
+  } catch { return defaultUserProfile }
+}
+
 function localWorkspace(): WorkspaceData {
   return {
     tasks: localTasks(),
@@ -197,6 +210,7 @@ function localWorkspace(): WorkspaceData {
     materials: localMaterials(),
     studyLogs: localStudyLogs(),
     preferences: localPreferences(),
+    profile: localUserProfile(),
     source: 'local',
   }
 }
@@ -237,7 +251,7 @@ export async function loadWorkspace(): Promise<WorkspaceData> {
   if (!supabase) return localWorkspace()
   const userId = await currentUserId(supabase)
   if (!userId) return { ...localWorkspace(), error: 'Supabase 已配置，但当前没有登录用户，暂时使用本地数据。' }
-  const [courseResult, taskResult, availabilityResult, fixedResult, scheduleResult, materialResult, logResult, preferencesResult] = await Promise.all([
+  const [courseResult, taskResult, availabilityResult, fixedResult, scheduleResult, materialResult, logResult, preferencesResult, profileResult] = await Promise.all([
     supabase.from('courses').select('*').order('created_at'),
     supabase.from('tasks').select('*').order('deadline', { ascending: true, nullsFirst: false }),
     supabase.from('availability_rules').select('*').order('weekday'),
@@ -246,6 +260,7 @@ export async function loadWorkspace(): Promise<WorkspaceData> {
     supabase.from('materials').select('id,file_name,file_type,file_size,status,storage_path,analysis_result,created_at,courses(name)').order('created_at', { ascending: false }),
     supabase.from('study_logs').select('id,task_id,planned_minutes,actual_minutes,quality,completed_at').order('completed_at', { ascending: false }),
     supabase.from('user_preferences').select('default_block_minutes,buffer_ratio,auto_log').maybeSingle(),
+    supabase.from('user_profiles').select('display_name,avatar_url').maybeSingle(),
   ])
   const firstError = [courseResult, taskResult, availabilityResult, fixedResult, scheduleResult, materialResult, logResult].find(result => result.error)?.error
   if (firstError) return { ...localWorkspace(), error: `数据库读取失败：${firstError.message}` }
@@ -261,6 +276,10 @@ export async function loadWorkspace(): Promise<WorkspaceData> {
       defaultBlockMinutes: Number(preferencesResult.data?.default_block_minutes) === 25 || Number(preferencesResult.data?.default_block_minutes) === 90 ? Number(preferencesResult.data?.default_block_minutes) as 25 | 90 : 50,
       bufferRatio: Math.min(Math.max(Number(preferencesResult.data?.buffer_ratio ?? defaultPreferences.bufferRatio), 0), 0.3),
       autoLog: preferencesResult.data?.auto_log !== false,
+    },
+    profile: profileResult.error ? defaultUserProfile : {
+      displayName: profileResult.data?.display_name?.trim() || defaultUserProfile.displayName,
+      avatarUrl: profileResult.data?.avatar_url ?? '',
     },
   }
 }
@@ -443,6 +462,23 @@ export async function savePreferences(input: UserPreferences): Promise<UserPrefe
   const { data, error } = await supabase.from('user_preferences').upsert({ default_block_minutes: parsed.defaultBlockMinutes, buffer_ratio: parsed.bufferRatio, auto_log: parsed.autoLog }, { onConflict: 'user_id' }).select('default_block_minutes,buffer_ratio,auto_log').single()
   if (error) throw error
   return { defaultBlockMinutes: data.default_block_minutes, bufferRatio: Number(data.buffer_ratio), autoLog: data.auto_log }
+}
+
+export async function saveUserProfile(input: UserProfile): Promise<UserProfile> {
+  const parsed = z.object({
+    displayName: z.string().trim().min(1, '昵称不能为空').max(32, '昵称不能超过 32 个字符'),
+    avatarUrl: z.string().trim().url('请输入有效的头像图片链接').max(2048).or(z.literal('')),
+  }).parse({ displayName: input.displayName.trim(), avatarUrl: input.avatarUrl?.trim() ?? '' })
+  if (!supabase || !(await currentUserId(supabase))) {
+    localStorage.setItem('study-user-profile', JSON.stringify(parsed))
+    return parsed
+  }
+  const { data, error } = await supabase.from('user_profiles')
+    .upsert({ display_name: parsed.displayName, avatar_url: parsed.avatarUrl || null, updated_at: new Date().toISOString() }, { onConflict: 'user_id' })
+    .select('display_name,avatar_url')
+    .single()
+  if (error) throw error
+  return { displayName: data.display_name, avatarUrl: data.avatar_url ?? '' }
 }
 
 export async function saveWeeklyInput(input: { weekStart: string; rawText: string; courseId?: string; materialIds?: string[] }): Promise<void> {
