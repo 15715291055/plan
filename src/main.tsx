@@ -440,7 +440,7 @@ function App() {
     <ShanHaiBackground state={backgroundState} emphasis={toast.includes('临时任务') ? 'warm' : 'none'} />
     <aside className={`sidebar ${mobileOpen ? 'mobile-open' : ''}`}>
       <div className="brand"><span className="brand-mark"><Sparkles size={16} /></span><span className="sidebar-label">行</span><span className="brand-sub sidebar-label">STUDY OS</span><button className="sidebar-toggle icon-btn" onClick={() => setSidebarCollapsed(value => !value)} aria-label={sidebarCollapsed ? '展开任务栏' : '收起任务栏'}>{sidebarCollapsed ? <PanelLeftOpen size={17} /> : <PanelLeftClose size={17} />}</button></div>
-      <button className="profile profile-button" onClick={() => setShowProfileModal(true)} title="编辑昵称和头像"><Avatar profile={profile} className="avatar" /><div className="sidebar-label"><strong>{profile.displayName}</strong></div><MoreHorizontal size={17} className="muted-icon sidebar-label" /></button>
+      <button className="profile profile-button" onClick={() => setShowProfileModal(true)} title="编辑昵称和头像"><Avatar profile={profile} className="avatar" /><MoreHorizontal size={17} className="muted-icon sidebar-label" /></button>
       <div className="nav-label sidebar-label">工作台</div>
       <nav>{navItems.map(item => { const Icon = item.icon; return <button key={item.id} className={`nav-item ${active === item.id ? 'active' : ''}`} onClick={() => { setActive(item.id); setMobileOpen(false) }}><Icon size={18} /><span className="sidebar-label">{item.label}</span>{item.id === 'today' && <span className="nav-badge">{tasks.filter(task => task.status !== 'done').length}</span>}</button> })}</nav>
       <div className="nav-label spaced sidebar-label">洞察</div>
