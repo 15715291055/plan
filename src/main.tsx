@@ -84,6 +84,10 @@ async function compressImageForVision(file: File): Promise<string> {
   return canvas.toDataURL('image/jpeg', .86)
 }
 
+function normalizedDeepSeekKey(value: string): string {
+  return value.trim().replace(/[\u0000-\u001f\u007f-\u00ff\u3000\s]/g, '')
+}
+
 function Avatar({ profile, className }: { profile: UserProfile; className: string }) {
   const [imageFailed, setImageFailed] = useState(false)
   useEffect(() => setImageFailed(false), [profile.avatarUrl])
@@ -258,11 +262,13 @@ function App() {
     }
   }
   async function analyzeScheduleImage(file: File) {
-    if (!deepSeekKey) { setToast('请先在设置中填写 DeepSeek API Key'); return }
+    const apiKey = normalizedDeepSeekKey(deepSeekKey)
+    if (!apiKey) { setToast('请先在设置中填写 DeepSeek API Key'); return }
+    if (!/^[\x21-\x7e]+$/.test(apiKey)) { setToast('DeepSeek API Key 含有无效字符，请重新粘贴'); return }
     if (!file.type.startsWith('image/')) { setToast('请上传 JPG、PNG 或 WebP 格式的课表图片'); return }
     try {
       const image = await compressImageForVision(file)
-      const response = await fetch('/api/analyze-schedule-image', { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-deepseek-api-key': deepSeekKey }, body: JSON.stringify({ image }) })
+      const response = await fetch('/api/analyze-schedule-image', { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-deepseek-api-key': apiKey }, body: JSON.stringify({ image }) })
       const payload = await response.json() as ScheduleImportResult & { error?: string }
       if (!response.ok) throw new Error(payload.error ?? '课表识别失败')
       setScheduleImport({ courses: payload.courses ?? [], availability: payload.availability ?? [], notes: payload.notes ?? '' })
@@ -270,9 +276,11 @@ function App() {
     } catch (error) { setToast(error instanceof Error ? error.message : '课表识别失败') }
   }
   async function analyzeScheduleText(content: string) {
-    if (!deepSeekKey) { setToast('请先在设置中填写 DeepSeek API Key'); return }
+    const apiKey = normalizedDeepSeekKey(deepSeekKey)
+    if (!apiKey) { setToast('请先在设置中填写 DeepSeek API Key'); return }
+    if (!/^[\x21-\x7e]+$/.test(apiKey)) { setToast('DeepSeek API Key 含有无效字符，请重新粘贴'); return }
     try {
-      const response = await fetch('/api/analyze-schedule-text', { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-deepseek-api-key': deepSeekKey }, body: JSON.stringify({ content }) })
+      const response = await fetch('/api/analyze-schedule-text', { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-deepseek-api-key': apiKey }, body: JSON.stringify({ content }) })
       const payload = await response.json() as ScheduleImportResult & { error?: string }
       if (!response.ok) throw new Error(payload.error ?? '课表文字解析失败')
       setScheduleImport({ courses: payload.courses ?? [], availability: payload.availability ?? [], notes: payload.notes ?? '' }); setToast('课表文字已解析，请确认后写入计划')
