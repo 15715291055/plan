@@ -38,11 +38,14 @@ function subtractIntervals(source: Interval[], blocked: Interval[]): Interval[] 
 
 function taskDifficulty(value: string): number { return value === '较难' ? 3 : value === '中等' ? 2 : 1 }
 
-export function buildSchedule(tasks: Task[], availability: AvailabilityRule[], fixedEvents: FixedEvent[], existingItems: ScheduleItem[], options?: { now?: Date; blockMinutes?: number; bufferRatio?: number; strategy?: ReplanStrategy }): SchedulerResult {
+export function buildSchedule(tasks: Task[], availability: AvailabilityRule[], fixedEvents: FixedEvent[], existingItems: ScheduleItem[], options?: { now?: Date; blockMinutes?: number; bufferRatio?: number; strategy?: ReplanStrategy; horizonDays?: number; minBlockMinutes?: number; breakMinutes?: number; peakStartHour?: number; peakEndHour?: number }): SchedulerResult {
   const now = options?.now ?? new Date()
   const blockMinutes = options?.blockMinutes ?? 50
   const bufferRatio = Math.min(Math.max(options?.bufferRatio ?? 0.15, 0), 0.3)
   const strategy = options?.strategy ?? 'minimal_change'
+  const horizonDays = Math.min(Math.max(options?.horizonDays ?? 28, 7), 56)
+  const minBlockMinutes = Math.min(Math.max(options?.minBlockMinutes ?? 20, 5), blockMinutes)
+  const breakMinutes = Math.min(Math.max(options?.breakMinutes ?? 0, 0), 30)
   const monday = mondayOf(now)
   const locked = existingItems.filter(item => item.locked || tasks.find(task => task.id === item.taskId)?.status === 'done')
   const retained = strategy === 'preserve' ? existingItems : locked
@@ -69,7 +72,7 @@ export function buildSchedule(tasks: Task[], availability: AvailabilityRule[], f
   const changes: ScheduleChange[] = retained.map(item => ({ type: 'unchanged', taskId: item.taskId, to: item.startTime, reason: item.locked ? '锁定时间块' : tasks.find(task => task.id === item.taskId)?.status === 'done' ? '已完成任务' : '保持原计划' }))
   const conflicts: string[] = []
   const windows: Interval[] = []
-  for (let day = 0; day < 7; day += 1) {
+  for (let day = 0; day < horizonDays; day += 1) {
     availability.filter(rule => rule.weekday === ((day + 1) % 7)).forEach(rule => {
       const start = dateAt(monday, day, rule.startTime)
       const end = dateAt(monday, day, rule.endTime)
@@ -79,12 +82,12 @@ export function buildSchedule(tasks: Task[], availability: AvailabilityRule[], f
       windows.push({ start: effectiveStart, end: new Date(end.getTime() - buffer) })
     })
   }
-  let free = subtractIntervals(windows, Array.from(blockedByDay.values()).reduce<Interval[]>((all, intervals) => all.concat(intervals), []))
+  let free = subtractIntervals(windows, Array.from(blockedByDay.values()).reduce<Interval[]>((all, intervals) => all.concat(intervals), [])).sort((a, b) => a.start.getTime() - b.start.getTime())
   for (const task of pending) {
-    let remaining = task.minutes
-    const deadline = task.deadlineIso ? new Date(task.deadlineIso) : null
+    let remaining = Math.max(0, task.minutes - (task.completedMinutes ?? 0))
+    const deadline = task.deadlineIso ? new Date(task.deadlineIso) : new Date(monday.getTime() + 7 * 24 * 60 * 60_000)
     const spreadDays = task.completionMode === 'spread_days' ? Math.min(Math.max(task.spreadDays ?? 2, 2), 7) : 1
-    const dailyTarget = Math.ceil(task.minutes / spreadDays)
+    const dailyTarget = Math.ceil(remaining / spreadDays)
     const allocatedByDay = new Map<string, number>()
     let taskAdded = false
     for (let index = 0; index < free.length && remaining > 0; index += 1) {
@@ -94,10 +97,11 @@ export function buildSchedule(tasks: Task[], availability: AvailabilityRule[], f
       const allocatedToday = allocatedByDay.get(dayKey) ?? 0
       if (task.completionMode === 'spread_days' && allocatedToday === 0 && allocatedByDay.size >= spreadDays) continue
       if (allocatedToday >= dailyTarget) continue
-      const endLimit = deadline && deadline < slot.end ? deadline : slot.end
+      const endLimit = deadline < slot.end ? deadline : slot.end
       const availableMinutes = Math.floor((endLimit.getTime() - slot.start.getTime()) / 60_000)
-      if (availableMinutes < 5) continue
-      const duration = Math.min(remaining, blockMinutes, availableMinutes, dailyTarget - allocatedToday)
+      if (availableMinutes < minBlockMinutes) continue
+      if (task.requireContinuous && availableMinutes < remaining) continue
+      const duration = task.requireContinuous ? remaining : Math.min(remaining, blockMinutes, availableMinutes, dailyTarget - allocatedToday)
       const start = new Date(slot.start)
       const end = new Date(start.getTime() + duration * 60_000)
       const item: ScheduleItem = { id: `local-schedule-item-${task.id}-${start.getTime()}`, taskId: task.id, startTime: start.toISOString(), endTime: end.toISOString(), locked: false, status: 'planned' }
@@ -106,10 +110,12 @@ export function buildSchedule(tasks: Task[], availability: AvailabilityRule[], f
       const previous = existingItems.find(existing => existing.taskId === task.id)
       const schedulingReason = task.completionMode === 'spread_days' ? `按 ${spreadDays} 天分摊安排` : strategy === 'urgent' ? '紧急任务优先插入' : '按截止时间和优先级安排'
       changes.push(previous ? { type: 'moved', taskId: task.id, from: previous.startTime, to: item.startTime, reason: schedulingReason } : { type: 'added', taskId: task.id, to: item.startTime, reason: schedulingReason })
-      free = subtractIntervals(free, [{ start, end }])
+      const freeAfterBlock = subtractIntervals(free, [{ start, end }])
+      const futureFreeMinutes = freeAfterBlock.reduce((sum, interval) => sum + Math.floor((interval.end.getTime() - interval.start.getTime()) / 60_000), 0)
+      free = futureFreeMinutes >= remaining + breakMinutes ? subtractIntervals(freeAfterBlock, [{ start: end, end: new Date(end.getTime() + breakMinutes * 60_000) }]) : freeAfterBlock
       index = -1
     }
-    if (!taskAdded || remaining > 0) { conflicts.push(`${task.title} 还缺少 ${remaining} 分钟可用时间`); changes.push({ type: 'conflict', taskId: task.id, reason: conflicts[conflicts.length - 1] }) }
+    if (!taskAdded || remaining > 0) { const reason = task.requireContinuous ? `${task.title} 缺少连续 ${remaining} 分钟的可用时间` : `${task.title} 还缺少 ${remaining} 分钟可用时间`; conflicts.push(reason); changes.push({ type: 'conflict', taskId: task.id, reason }) }
   }
   return { items: generated.sort((a, b) => a.startTime.localeCompare(b.startTime)), changes, conflicts }
 }

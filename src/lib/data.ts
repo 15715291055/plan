@@ -21,6 +21,8 @@ export type Task = {
   source?: string
   completionMode?: TaskCompletionMode
   spreadDays?: number
+  requireContinuous?: boolean
+  completedMinutes?: number
 }
 
 export type Course = {
@@ -54,7 +56,7 @@ export type MaterialTask = { title: string; estimated_minutes: number; difficult
 export type MaterialAnalysis = { chapters: string[]; knowledge_points: string[]; tasks: MaterialTask[]; summary: string }
 export type Material = { id: string; fileName: string; fileType: string; fileSize?: number; status: string; course?: string; createdAt: string; storagePath?: string; analysisResult?: MaterialAnalysis }
 export type StudyLog = { id: string; taskId: string; plannedMinutes?: number; actualMinutes?: number; quality?: number; completedAt?: string }
-export type UserPreferences = { defaultBlockMinutes: 25 | 50 | 90; bufferRatio: number; autoLog: boolean }
+export type UserPreferences = { defaultBlockMinutes: 25 | 50 | 90; bufferRatio: number; autoLog: boolean; breakMinutes: 5 | 10 | 15; minBlockMinutes: 15 | 20 | 25; peakStartHour: number; peakEndHour: number }
 export type UserProfile = { displayName: string; avatarUrl?: string }
 
 export type ScheduleInput = {
@@ -82,10 +84,12 @@ const taskInputSchema = z.object({
 const taskCompletionSchema = z.object({
   completionMode: z.enum(['single_day', 'spread_days']).optional(),
   spreadDays: z.number().int().min(2).max(7).optional(),
+  requireContinuous: z.boolean().optional(),
+  completedMinutes: z.number().int().min(0).optional(),
 })
 
 const courseColors = ['#2673e8', '#e47735', '#2a9b83', '#d84d78', '#8d68c3', '#b38a32']
-export const defaultPreferences: UserPreferences = { defaultBlockMinutes: 50, bufferRatio: 0.15, autoLog: true }
+export const defaultPreferences: UserPreferences = { defaultBlockMinutes: 50, bufferRatio: 0.15, autoLog: true, breakMinutes: 10, minBlockMinutes: 20, peakStartHour: 9, peakEndHour: 12 }
 export const defaultUserProfile: UserProfile = { displayName: '学习者', avatarUrl: '' }
 
 export const demoCourses: Course[] = [
@@ -194,6 +198,10 @@ function localPreferences(): UserPreferences {
       defaultBlockMinutes: block === 25 || block === 90 ? block : 50,
       bufferRatio: Number.isFinite(buffer) ? Math.min(Math.max(buffer, 0), 0.3) : defaultPreferences.bufferRatio,
       autoLog: parsed.autoLog !== false,
+      breakMinutes: parsed.breakMinutes === 5 || parsed.breakMinutes === 15 ? parsed.breakMinutes : 10,
+      minBlockMinutes: parsed.minBlockMinutes === 15 || parsed.minBlockMinutes === 25 ? parsed.minBlockMinutes : 20,
+      peakStartHour: Number.isInteger(parsed.peakStartHour) ? Math.min(Math.max(parsed.peakStartHour ?? 9, 0), 23) : 9,
+      peakEndHour: Number.isInteger(parsed.peakEndHour) ? Math.min(Math.max(parsed.peakEndHour ?? 12, 1), 24) : 12,
     }
   } catch { return defaultPreferences }
 }
@@ -268,14 +276,16 @@ function difficultyLabel(value: number | null): string {
 function mapTask(row: Record<string, unknown>, courses: Course[], schedule: ScheduleItem[]): Task {
   const course = courses.find(c => c.id === row.course_id) ?? courses.find(c => c.name === row.course) ?? { id: '', name: '未分类', color: '#8793a1' }
   const scheduleItem = schedule.find(item => item.taskId === row.id)
-  const completion = z.object({ completionMode: z.enum(['single_day', 'spread_days']).optional(), spreadDays: z.number().int().min(2).max(7).optional() }).safeParse(row.evidence)
+  const completion = taskCompletionSchema.safeParse(row.evidence)
   const completionMode = completion.success ? completion.data.completionMode : undefined
   const spreadDays = completion.success && completionMode === 'spread_days' ? completion.data.spreadDays ?? 2 : undefined
+  const requireContinuous = completion.success ? completion.data.requireContinuous : undefined
+  const completedMinutes = completion.success ? completion.data.completedMinutes ?? 0 : 0
   return {
     id: String(row.id), title: String(row.title), course: course.name, courseId: course.id,
     color: course.color, deadline: formatDeadline(row.deadline as string | null), deadlineIso: row.deadline as string | undefined,
     minutes: Number(row.estimated_minutes ?? 30), priority: Number(row.priority ?? 0), difficulty: difficultyLabel(row.difficulty as number | null),
-    status: row.status === 'completed' ? 'done' : row.status === 'done' ? 'done' : 'todo', type: String(row.task_type ?? '学习'), slot: scheduleItem?.startTime?.slice(11, 16), source: String(row.source ?? 'manual'), note: String(row.description ?? ''), completionMode, spreadDays,
+    status: row.status === 'completed' ? 'done' : row.status === 'done' ? 'done' : 'todo', type: String(row.task_type ?? '学习'), slot: scheduleItem?.startTime?.slice(11, 16), source: String(row.source ?? 'manual'), note: String(row.description ?? ''), completionMode, spreadDays, requireContinuous, completedMinutes,
   }
 }
 
@@ -313,6 +323,10 @@ export async function loadWorkspace(): Promise<WorkspaceData> {
       defaultBlockMinutes: Number(preferencesResult.data?.default_block_minutes) === 25 || Number(preferencesResult.data?.default_block_minutes) === 90 ? Number(preferencesResult.data?.default_block_minutes) as 25 | 90 : 50,
       bufferRatio: Math.min(Math.max(Number(preferencesResult.data?.buffer_ratio ?? defaultPreferences.bufferRatio), 0), 0.3),
       autoLog: preferencesResult.data?.auto_log !== false,
+      breakMinutes: defaultPreferences.breakMinutes,
+      minBlockMinutes: defaultPreferences.minBlockMinutes,
+      peakStartHour: defaultPreferences.peakStartHour,
+      peakEndHour: defaultPreferences.peakEndHour,
     },
     profile: profileResult.error ? defaultUserProfile : {
       displayName: profileResult.data?.display_name?.trim() || defaultUserProfile.displayName,
@@ -321,17 +335,18 @@ export async function loadWorkspace(): Promise<WorkspaceData> {
   }
 }
 
-export async function createTask(input: { title: string; minutes: number; course: string; deadlineIso?: string | null; difficulty?: number; priority?: number; type?: string; source?: 'manual' | 'weekly_input' | 'material' | 'temporary'; completionMode?: TaskCompletionMode; spreadDays?: number }): Promise<Task> {
+export async function createTask(input: { title: string; minutes: number; course: string; deadlineIso?: string | null; difficulty?: number; priority?: number; type?: string; source?: 'manual' | 'weekly_input' | 'material' | 'temporary'; completionMode?: TaskCompletionMode; spreadDays?: number; requireContinuous?: boolean }): Promise<Task> {
   const parsed = taskInputSchema.parse(input)
   const completion = taskCompletionSchema.parse(input)
   const completionMode = completion.completionMode ?? 'single_day'
   const spreadDays = completionMode === 'spread_days' ? completion.spreadDays ?? 2 : undefined
   const localCourse = localCourses().find(course => course.name === parsed.course)
-  const localTask: Task = { id: `local-${Date.now()}`, title: parsed.title, course: parsed.course, courseId: localCourse?.id, color: localCourse?.color ?? '#2673e8', deadline: formatDeadline(input.deadlineIso ?? null), deadlineIso: input.deadlineIso ?? undefined, minutes: parsed.minutes, priority: input.priority ?? 70, difficulty: difficultyLabel(input.difficulty ?? 3), status: 'todo', type: input.type ?? '临时任务', slot: input.source === 'weekly_input' ? undefined : '16:10', source: input.source ?? 'temporary', completionMode, spreadDays }
+  const requireContinuous = completion.requireContinuous ?? false
+  const localTask: Task = { id: `local-${Date.now()}`, title: parsed.title, course: parsed.course, courseId: localCourse?.id, color: localCourse?.color ?? '#2673e8', deadline: formatDeadline(input.deadlineIso ?? null), deadlineIso: input.deadlineIso ?? undefined, minutes: parsed.minutes, priority: input.priority ?? 70, difficulty: difficultyLabel(input.difficulty ?? 3), status: 'todo', type: input.type ?? '临时任务', slot: input.source === 'weekly_input' ? undefined : '16:10', source: input.source ?? 'temporary', completionMode, spreadDays, requireContinuous, completedMinutes: 0 }
   if (!supabase || !(await currentUserId(supabase))) return localTask
   const courseResult = await supabase.from('courses').select('id,color').eq('name', parsed.course).maybeSingle()
   if (courseResult.error) throw courseResult.error
-  const { data, error } = await supabase.from('tasks').insert({ title: parsed.title, estimated_minutes: parsed.minutes, course_id: courseResult.data?.id ?? null, deadline: input.deadlineIso ?? null, task_type: input.type ?? 'temporary', status: 'todo', source: input.source ?? 'temporary', priority: input.priority ?? 70, difficulty: input.difficulty ?? 3, evidence: { completionMode, spreadDays } }).select('*').single()
+  const { data, error } = await supabase.from('tasks').insert({ title: parsed.title, estimated_minutes: parsed.minutes, course_id: courseResult.data?.id ?? null, deadline: input.deadlineIso ?? null, task_type: input.type ?? 'temporary', status: 'todo', source: input.source ?? 'temporary', priority: input.priority ?? 70, difficulty: input.difficulty ?? 3, evidence: { completionMode, spreadDays, requireContinuous, completedMinutes: 0 } }).select('*').single()
   if (error) throw error
   const course = courseResult.data ? [{ id: courseResult.data.id, name: parsed.course, color: courseResult.data.color ?? '#2673e8' }] : []
   return mapTask(data, course, [])
@@ -343,7 +358,7 @@ export async function updateTaskStatus(id: string, status: TaskStatus): Promise<
   if (error) throw error
 }
 
-export async function updateTask(id: string, input: { title: string; minutes: number; course: string; deadlineIso?: string | null; difficulty?: number; type?: string; completionMode?: TaskCompletionMode; spreadDays?: number }): Promise<void> {
+export async function updateTask(id: string, input: { title: string; minutes: number; course: string; deadlineIso?: string | null; difficulty?: number; priority?: number; type?: string; completionMode?: TaskCompletionMode; spreadDays?: number; requireContinuous?: boolean; completedMinutes?: number }): Promise<void> {
   const parsed = taskInputSchema.parse(input)
   const completion = taskCompletionSchema.parse(input)
   const completionMode = completion.completionMode ?? 'single_day'
@@ -351,7 +366,7 @@ export async function updateTask(id: string, input: { title: string; minutes: nu
   if (!supabase || id.startsWith('local-') || !(await currentUserId(supabase))) return
   const courseResult = await supabase.from('courses').select('id').eq('name', parsed.course).maybeSingle()
   if (courseResult.error) throw courseResult.error
-  const { error } = await supabase.from('tasks').update({ title: parsed.title, estimated_minutes: parsed.minutes, course_id: courseResult.data?.id ?? null, deadline: input.deadlineIso ?? null, difficulty: input.difficulty ?? null, task_type: input.type ?? 'study', evidence: { completionMode, spreadDays }, updated_at: new Date().toISOString() }).eq('id', id)
+  const { error } = await supabase.from('tasks').update({ title: parsed.title, estimated_minutes: parsed.minutes, course_id: courseResult.data?.id ?? null, deadline: input.deadlineIso ?? null, difficulty: input.difficulty ?? null, priority: input.priority ?? 70, task_type: input.type ?? 'study', evidence: { completionMode, spreadDays, requireContinuous: completion.requireContinuous ?? false, completedMinutes: completion.completedMinutes ?? 0 }, updated_at: new Date().toISOString() }).eq('id', id)
   if (error) throw error
 }
 
@@ -500,11 +515,15 @@ export async function savePreferences(input: UserPreferences): Promise<UserPrefe
     defaultBlockMinutes: z.union([z.literal(25), z.literal(50), z.literal(90)]),
     bufferRatio: z.number().min(0).max(0.3),
     autoLog: z.boolean(),
+    breakMinutes: z.union([z.literal(5), z.literal(10), z.literal(15)]),
+    minBlockMinutes: z.union([z.literal(15), z.literal(20), z.literal(25)]),
+    peakStartHour: z.number().int().min(0).max(23),
+    peakEndHour: z.number().int().min(1).max(24),
   }).parse(input)
   if (!supabase || !(await currentUserId(supabase))) return parsed
   const { data, error } = await supabase.from('user_preferences').upsert({ default_block_minutes: parsed.defaultBlockMinutes, buffer_ratio: parsed.bufferRatio, auto_log: parsed.autoLog }, { onConflict: 'user_id' }).select('default_block_minutes,buffer_ratio,auto_log').single()
   if (error) throw error
-  return { defaultBlockMinutes: data.default_block_minutes, bufferRatio: Number(data.buffer_ratio), autoLog: data.auto_log }
+  return { ...parsed, defaultBlockMinutes: data.default_block_minutes, bufferRatio: Number(data.buffer_ratio), autoLog: data.auto_log }
 }
 
 export async function saveUserProfile(input: UserProfile): Promise<UserProfile> {

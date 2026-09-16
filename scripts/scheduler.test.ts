@@ -62,3 +62,28 @@ test('does not exceed the selected number of days for a multi-day task', () => {
   assert.equal(new Set(result.items.map(item => item.startTime.slice(0, 10))).size, 2)
   assert.equal(result.conflicts.length, 1)
 })
+
+test('requires one continuous window when the task asks for it', () => {
+  const splitWindows = [
+    { id: 'first', weekday: 1, startTime: '18:00', endTime: '18:50' },
+    { id: 'second', weekday: 1, startTime: '19:00', endTime: '19:50' },
+  ]
+  const continuousTask = { ...task('continuous', 80), requireContinuous: true }
+  const result = buildSchedule([continuousTask], splitWindows, [], [], { now, bufferRatio: 0, minBlockMinutes: 20 })
+  assert.equal(result.items.length, 0)
+  assert.match(result.conflicts[0], /连续 80 分钟/)
+})
+
+test('uses only remaining minutes and reserves a break between blocks', () => {
+  const partialTask = { ...task('partial', 150), completedMinutes: 50 }
+  const result = buildSchedule([partialTask], availability, [], [], { now, blockMinutes: 50, bufferRatio: 0, breakMinutes: 10, minBlockMinutes: 20 })
+  assert.equal(result.items.reduce((sum, item) => sum + (Date.parse(item.endTime) - Date.parse(item.startTime)) / 60000, 0), 100)
+  assert.equal((Date.parse(result.items[1].startTime) - Date.parse(result.items[0].endTime)) / 60000, 10)
+})
+
+test('plans beyond the current week for tasks with a later deadline', () => {
+  const taskNextWeek = task('next-week', 50, '2026-09-24T12:00:00+08:00')
+  const result = buildSchedule([taskNextWeek], availability, [], [], { now, bufferRatio: 0, horizonDays: 28 })
+  assert.equal(result.conflicts.length, 0)
+  assert.ok(result.items[0].startTime.slice(0, 10) >= '2026-09-14')
+})
