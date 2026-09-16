@@ -83,20 +83,29 @@ export function buildSchedule(tasks: Task[], availability: AvailabilityRule[], f
   for (const task of pending) {
     let remaining = task.minutes
     const deadline = task.deadlineIso ? new Date(task.deadlineIso) : null
+    const spreadDays = task.completionMode === 'spread_days' ? Math.min(Math.max(task.spreadDays ?? 2, 2), 7) : 1
+    const dailyTarget = Math.ceil(task.minutes / spreadDays)
+    const allocatedByDay = new Map<string, number>()
     let taskAdded = false
     for (let index = 0; index < free.length && remaining > 0; index += 1) {
       const slot = free[index]
       if (slot.end <= now) continue
+      const dayKey = slot.start.toISOString().slice(0, 10)
+      const allocatedToday = allocatedByDay.get(dayKey) ?? 0
+      if (task.completionMode === 'spread_days' && allocatedToday === 0 && allocatedByDay.size >= spreadDays) continue
+      if (allocatedToday >= dailyTarget) continue
       const endLimit = deadline && deadline < slot.end ? deadline : slot.end
       const availableMinutes = Math.floor((endLimit.getTime() - slot.start.getTime()) / 60_000)
       if (availableMinutes < 5) continue
-      const duration = Math.min(remaining, blockMinutes, availableMinutes)
+      const duration = Math.min(remaining, blockMinutes, availableMinutes, dailyTarget - allocatedToday)
       const start = new Date(slot.start)
       const end = new Date(start.getTime() + duration * 60_000)
       const item: ScheduleItem = { id: `local-schedule-item-${task.id}-${start.getTime()}`, taskId: task.id, startTime: start.toISOString(), endTime: end.toISOString(), locked: false, status: 'planned' }
       generated.push(item); addBlocked({ start, end }); taskAdded = true; remaining -= duration
+      allocatedByDay.set(dayKey, allocatedToday + duration)
       const previous = existingItems.find(existing => existing.taskId === task.id)
-      changes.push(previous ? { type: 'moved', taskId: task.id, from: previous.startTime, to: item.startTime, reason: strategy === 'urgent' ? '紧急任务优先插入' : '按截止时间和优先级安排' } : { type: 'added', taskId: task.id, to: item.startTime, reason: strategy === 'urgent' ? '紧急任务优先插入' : '按截止时间和优先级安排' })
+      const schedulingReason = task.completionMode === 'spread_days' ? `按 ${spreadDays} 天分摊安排` : strategy === 'urgent' ? '紧急任务优先插入' : '按截止时间和优先级安排'
+      changes.push(previous ? { type: 'moved', taskId: task.id, from: previous.startTime, to: item.startTime, reason: schedulingReason } : { type: 'added', taskId: task.id, to: item.startTime, reason: schedulingReason })
       free = subtractIntervals(free, [{ start, end }])
       index = -1
     }

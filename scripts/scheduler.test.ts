@@ -37,3 +37,28 @@ test('preserve strategy retains existing unlocked blocks', () => {
   assert.equal(result.items.find(item => item.taskId === 'existing-task')?.startTime, existing.startTime)
   assert.equal(result.changes.find(change => change.taskId === 'existing-task')?.reason, '保持原计划')
 })
+
+test('spreads a multi-day task across the selected number of dates', () => {
+  const multiDayAvailability = [
+    { id: 'mon', weekday: 1, startTime: '18:00', endTime: '20:00' },
+    { id: 'tue', weekday: 2, startTime: '18:00', endTime: '20:00' },
+  ]
+  const multiDayTask = { ...task('spread-task', 120), completionMode: 'spread_days' as const, spreadDays: 2 }
+  const result = buildSchedule([multiDayTask], multiDayAvailability, [], [], { now, blockMinutes: 50, bufferRatio: 0 })
+  assert.equal(result.conflicts.length, 0)
+  assert.equal(result.items.reduce((sum, item) => sum + (Date.parse(item.endTime) - Date.parse(item.startTime)) / 60000, 0), 120)
+  assert.deepEqual(new Set(result.items.map(item => item.startTime.slice(0, 10))), new Set(['2026-09-14', '2026-09-15']))
+  assert.ok(result.items.every(item => (Date.parse(item.endTime) - Date.parse(item.startTime)) / 60000 <= 50))
+})
+
+test('does not exceed the selected number of days for a multi-day task', () => {
+  const threeDayAvailability = [
+    { id: 'mon', weekday: 1, startTime: '18:00', endTime: '19:00' },
+    { id: 'tue', weekday: 2, startTime: '18:00', endTime: '19:00' },
+    { id: 'wed', weekday: 3, startTime: '18:00', endTime: '19:00' },
+  ]
+  const twoDayTask = { ...task('limited-spread', 150), completionMode: 'spread_days' as const, spreadDays: 2 }
+  const result = buildSchedule([twoDayTask], threeDayAvailability, [], [], { now, blockMinutes: 50, bufferRatio: 0 })
+  assert.equal(new Set(result.items.map(item => item.startTime.slice(0, 10))).size, 2)
+  assert.equal(result.conflicts.length, 1)
+})

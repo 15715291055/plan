@@ -2,6 +2,7 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 import { z } from 'zod'
 
 export type TaskStatus = 'todo' | 'done'
+export type TaskCompletionMode = 'single_day' | 'spread_days'
 export type Task = {
   id: string
   title: string
@@ -18,6 +19,8 @@ export type Task = {
   slot?: string
   note?: string
   source?: string
+  completionMode?: TaskCompletionMode
+  spreadDays?: number
 }
 
 export type Course = {
@@ -74,6 +77,11 @@ const taskInputSchema = z.object({
   title: z.string().trim().min(1, '任务名称不能为空'),
   course: z.string().trim().min(1, '请选择课程'),
   minutes: z.number().int().min(5).max(1440),
+})
+
+const taskCompletionSchema = z.object({
+  completionMode: z.enum(['single_day', 'spread_days']).optional(),
+  spreadDays: z.number().int().min(2).max(7).optional(),
 })
 
 const courseColors = ['#2673e8', '#e47735', '#2a9b83', '#d84d78', '#8d68c3', '#b38a32']
@@ -260,11 +268,14 @@ function difficultyLabel(value: number | null): string {
 function mapTask(row: Record<string, unknown>, courses: Course[], schedule: ScheduleItem[]): Task {
   const course = courses.find(c => c.id === row.course_id) ?? courses.find(c => c.name === row.course) ?? { id: '', name: '未分类', color: '#8793a1' }
   const scheduleItem = schedule.find(item => item.taskId === row.id)
+  const completion = z.object({ completionMode: z.enum(['single_day', 'spread_days']).optional(), spreadDays: z.number().int().min(2).max(7).optional() }).safeParse(row.evidence)
+  const completionMode = completion.success ? completion.data.completionMode : undefined
+  const spreadDays = completion.success && completionMode === 'spread_days' ? completion.data.spreadDays ?? 2 : undefined
   return {
     id: String(row.id), title: String(row.title), course: course.name, courseId: course.id,
     color: course.color, deadline: formatDeadline(row.deadline as string | null), deadlineIso: row.deadline as string | undefined,
     minutes: Number(row.estimated_minutes ?? 30), priority: Number(row.priority ?? 0), difficulty: difficultyLabel(row.difficulty as number | null),
-    status: row.status === 'completed' ? 'done' : row.status === 'done' ? 'done' : 'todo', type: String(row.task_type ?? '学习'), slot: scheduleItem?.startTime?.slice(11, 16), source: String(row.source ?? 'manual'), note: String(row.description ?? ''),
+    status: row.status === 'completed' ? 'done' : row.status === 'done' ? 'done' : 'todo', type: String(row.task_type ?? '学习'), slot: scheduleItem?.startTime?.slice(11, 16), source: String(row.source ?? 'manual'), note: String(row.description ?? ''), completionMode, spreadDays,
   }
 }
 
@@ -310,14 +321,17 @@ export async function loadWorkspace(): Promise<WorkspaceData> {
   }
 }
 
-export async function createTask(input: { title: string; minutes: number; course: string; deadlineIso?: string | null; difficulty?: number; priority?: number; type?: string; source?: 'manual' | 'weekly_input' | 'material' | 'temporary' }): Promise<Task> {
+export async function createTask(input: { title: string; minutes: number; course: string; deadlineIso?: string | null; difficulty?: number; priority?: number; type?: string; source?: 'manual' | 'weekly_input' | 'material' | 'temporary'; completionMode?: TaskCompletionMode; spreadDays?: number }): Promise<Task> {
   const parsed = taskInputSchema.parse(input)
+  const completion = taskCompletionSchema.parse(input)
+  const completionMode = completion.completionMode ?? 'single_day'
+  const spreadDays = completionMode === 'spread_days' ? completion.spreadDays ?? 2 : undefined
   const localCourse = localCourses().find(course => course.name === parsed.course)
-  const localTask: Task = { id: `local-${Date.now()}`, title: parsed.title, course: parsed.course, courseId: localCourse?.id, color: localCourse?.color ?? '#2673e8', deadline: formatDeadline(input.deadlineIso ?? null), deadlineIso: input.deadlineIso ?? undefined, minutes: parsed.minutes, priority: input.priority ?? 70, difficulty: difficultyLabel(input.difficulty ?? 3), status: 'todo', type: input.type ?? '临时任务', slot: input.source === 'weekly_input' ? undefined : '16:10', source: input.source ?? 'temporary' }
+  const localTask: Task = { id: `local-${Date.now()}`, title: parsed.title, course: parsed.course, courseId: localCourse?.id, color: localCourse?.color ?? '#2673e8', deadline: formatDeadline(input.deadlineIso ?? null), deadlineIso: input.deadlineIso ?? undefined, minutes: parsed.minutes, priority: input.priority ?? 70, difficulty: difficultyLabel(input.difficulty ?? 3), status: 'todo', type: input.type ?? '临时任务', slot: input.source === 'weekly_input' ? undefined : '16:10', source: input.source ?? 'temporary', completionMode, spreadDays }
   if (!supabase || !(await currentUserId(supabase))) return localTask
   const courseResult = await supabase.from('courses').select('id,color').eq('name', parsed.course).maybeSingle()
   if (courseResult.error) throw courseResult.error
-  const { data, error } = await supabase.from('tasks').insert({ title: parsed.title, estimated_minutes: parsed.minutes, course_id: courseResult.data?.id ?? null, deadline: input.deadlineIso ?? null, task_type: input.type ?? 'temporary', status: 'todo', source: input.source ?? 'temporary', priority: input.priority ?? 70, difficulty: input.difficulty ?? 3 }).select('*').single()
+  const { data, error } = await supabase.from('tasks').insert({ title: parsed.title, estimated_minutes: parsed.minutes, course_id: courseResult.data?.id ?? null, deadline: input.deadlineIso ?? null, task_type: input.type ?? 'temporary', status: 'todo', source: input.source ?? 'temporary', priority: input.priority ?? 70, difficulty: input.difficulty ?? 3, evidence: { completionMode, spreadDays } }).select('*').single()
   if (error) throw error
   const course = courseResult.data ? [{ id: courseResult.data.id, name: parsed.course, color: courseResult.data.color ?? '#2673e8' }] : []
   return mapTask(data, course, [])
@@ -329,12 +343,15 @@ export async function updateTaskStatus(id: string, status: TaskStatus): Promise<
   if (error) throw error
 }
 
-export async function updateTask(id: string, input: { title: string; minutes: number; course: string; deadlineIso?: string | null; difficulty?: number; type?: string }): Promise<void> {
+export async function updateTask(id: string, input: { title: string; minutes: number; course: string; deadlineIso?: string | null; difficulty?: number; type?: string; completionMode?: TaskCompletionMode; spreadDays?: number }): Promise<void> {
   const parsed = taskInputSchema.parse(input)
+  const completion = taskCompletionSchema.parse(input)
+  const completionMode = completion.completionMode ?? 'single_day'
+  const spreadDays = completionMode === 'spread_days' ? completion.spreadDays ?? 2 : undefined
   if (!supabase || id.startsWith('local-') || !(await currentUserId(supabase))) return
   const courseResult = await supabase.from('courses').select('id').eq('name', parsed.course).maybeSingle()
   if (courseResult.error) throw courseResult.error
-  const { error } = await supabase.from('tasks').update({ title: parsed.title, estimated_minutes: parsed.minutes, course_id: courseResult.data?.id ?? null, deadline: input.deadlineIso ?? null, difficulty: input.difficulty ?? null, task_type: input.type ?? 'study', updated_at: new Date().toISOString() }).eq('id', id)
+  const { error } = await supabase.from('tasks').update({ title: parsed.title, estimated_minutes: parsed.minutes, course_id: courseResult.data?.id ?? null, deadline: input.deadlineIso ?? null, difficulty: input.difficulty ?? null, task_type: input.type ?? 'study', evidence: { completionMode, spreadDays }, updated_at: new Date().toISOString() }).eq('id', id)
   if (error) throw error
 }
 
