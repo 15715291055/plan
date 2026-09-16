@@ -57,6 +57,7 @@ import {
 import { ShanHaiBackground, type ShanHaiState } from './components/ShanHaiBackground'
 import { buildSchedule, type ReplanStrategy } from './lib/scheduler'
 import { extractMaterialText } from './lib/extract'
+import { greetingFor, quoteFor } from './lib/daily-inspiration'
 import './styles.css'
 
 const weekDays = ['周一', '周二', '周三', '周四', '周五', '周六', '周日']
@@ -488,7 +489,24 @@ function App() {
 
 function TodayView({ profile, tasks, allTasks, availability, fixedEvents, progress, totalMinutes, toggleTask, startTimer, timerTask, timerLabel, stopTimer, onAdd, replanning, onReplan }: { profile: UserProfile; tasks: Task[]; allTasks: Task[]; availability: AvailabilityRule[]; fixedEvents: FixedEvent[]; progress: number; totalMinutes: number; toggleTask: (id:string)=>void; startTimer:(id:string)=>void; timerTask:string|null; timerLabel:string; stopTimer:()=>void; onAdd:()=>void; replanning:boolean; onReplan:()=>void }) {
   const done = allTasks.filter(t => t.status === 'done').length
-  const now = new Date()
+  const [now, setNow] = useState(() => new Date())
+  useEffect(() => {
+    let timeout: number
+    const update = () => {
+      window.clearTimeout(timeout)
+      setNow(new Date())
+      timeout = window.setTimeout(update, 60_000 - Date.now() % 60_000)
+    }
+    update()
+    window.addEventListener('focus', update)
+    document.addEventListener('visibilitychange', update)
+    return () => {
+      window.clearTimeout(timeout)
+      window.removeEventListener('focus', update)
+      document.removeEventListener('visibilitychange', update)
+    }
+  }, [])
+  const quote = quoteFor(now)
   const todayWeekday = now.getDay()
   const parseMinutes = (value: string) => { const [hour, minute] = value.split(':').map(Number); return (hour || 0) * 60 + (minute || 0) }
   const availableMinutes = availability.filter(rule => rule.weekday === todayWeekday).reduce((sum, rule) => sum + Math.max(0, parseMinutes(rule.endTime) - parseMinutes(rule.startTime)), 0)
@@ -496,7 +514,7 @@ function TodayView({ profile, tasks, allTasks, availability, fixedEvents, progre
   const dailyCapacity = Math.max(0, availableMinutes - fixedMinutes)
   const scheduledMinutes = tasks.reduce((sum, task) => sum + task.minutes, 0)
   const dueTasks = allTasks.filter(task => task.status !== 'done' && task.deadlineIso).sort((a, b) => new Date(a.deadlineIso!).getTime() - new Date(b.deadlineIso!).getTime()).slice(0, 3)
-  return <div className="page"><div className="page-head"><div><div className="eyebrow">{now.toLocaleDateString('zh-CN', { weekday: 'long', month: 'long', day: 'numeric' })}</div><h1>早上好，{profile.displayName} <span className="wave">✦</span></h1><p className="subhead">今天也为重要的事留出专注时间。</p></div><div className="head-actions"><button className="button secondary" onClick={onReplan} disabled={replanning}><RefreshCw size={16} className={replanning ? 'spin' : ''} />{replanning ? '正在排程...' : '重新排程'}</button><button className="button primary" onClick={onAdd}><Plus size={17} />添加任务</button></div></div>
+  return <div className="page"><div className="page-head"><div className="daily-welcome"><div className="eyebrow">{now.toLocaleDateString('zh-CN', { weekday: 'long', month: 'long', day: 'numeric' })}</div><h1>{greetingFor(now)}，{profile.displayName} <span className="wave">✦</span></h1><p className="subhead daily-quote" lang="en"><q>{quote.text}</q> <span className="quote-author">— {quote.author}</span></p></div><div className="head-actions"><button className="button secondary" onClick={onReplan} disabled={replanning}><RefreshCw size={16} className={replanning ? 'spin' : ''} />{replanning ? '正在排程...' : '重新排程'}</button><button className="button primary" onClick={onAdd}><Plus size={17} />添加任务</button></div></div>
     <div className="stat-grid"><div className="stat-card accent"><div className="stat-top"><span>今日学习</span><Clock3 size={17} /></div><strong>{Math.floor(totalMinutes / 60)}<small>h</small> {totalMinutes % 60}<small>m</small></strong><div className="stat-meta"><span>计划总时长</span><span className="trend">{tasks.length ? `${tasks.length} 项` : '暂无任务'}</span></div></div><div className="stat-card"><div className="stat-top"><span>完成进度</span><span className="mini-ring">{progress}%</span></div><strong>{done}<small> / </small>{allTasks.length}<small> 项</small></strong><div className="progress-line"><i style={{ width: `${progress}%` }} /></div></div><div className="stat-card"><div className="stat-top"><span>今日不可用时间</span><Zap size={17} /></div><strong>{Math.floor(dailyCapacity / 60)}<small>h</small> {dailyCapacity % 60}<small>m</small></strong><div className="stat-meta"><span>已安排 {Math.round(scheduledMinutes / 60 * 10) / 10}h</span><span className="neutral">余 {Math.floor(Math.max(0, dailyCapacity - scheduledMinutes) / 60)}h {Math.max(0, dailyCapacity - scheduledMinutes) % 60}m</span></div></div><div className="stat-card"><div className="stat-top"><span>计划负荷</span><span className="load-dot" /></div><strong className="load-value">{dailyCapacity === 0 ? '未设置' : scheduledMinutes / dailyCapacity > .9 ? '偏高' : scheduledMinutes / dailyCapacity > .65 ? '适中' : '轻松'}</strong><div className="load-bar"><i style={{ width: `${Math.min(100, dailyCapacity ? scheduledMinutes / dailyCapacity * 100 : 0)}%` }} /></div><div className="stat-meta"><span>{dailyCapacity ? `${Math.round(scheduledMinutes / dailyCapacity * 100)}% 已安排` : '添加不可用时间后计算'}</span></div></div></div>
     <div className="content-grid"><section className="panel task-panel"><div className="panel-head"><div><h2>今日任务</h2><span className="panel-caption">按优先级自动排序 · {tasks.length} 项</span></div><button className="text-btn">查看全部 <ArrowRight size={15} /></button></div><div className="task-list">{tasks.length ? tasks.map(task => <TaskRow key={task.id} task={task} toggleTask={toggleTask} startTimer={startTimer} timerTask={timerTask} timerLabel={timerLabel} />) : <div className="table-empty">今天还没有排程任务</div>}</div><button className="add-row" onClick={onAdd}><Plus size={16} />添加临时任务</button></section><aside className="right-column"><section className="panel focus-panel"><div className="panel-head"><div><h2>现在最适合做什么</h2><span className="panel-caption">基于截止时间、难度和你的状态</span></div><Sparkles size={18} className="spark-icon" /></div><div className="recommend"><div className="recommend-tag">建议现在开始</div><h3>{tasks.find(t => t.status === 'todo')?.title || '今日任务已完成'}</h3><p>{tasks.find(t => t.status === 'todo') ? '保持专注，完成后距离今日目标更近一步。' : '今天的任务已经全部完成。'}</p><div className="recommend-footer"><span><Clock3 size={14} />{tasks.find(t => t.status === 'todo')?.minutes ?? 0} 分钟</span><button className="button primary small" onClick={() => { const t = tasks.find(t => t.status === 'todo'); if (t) startTimer(t.id) }} disabled={!tasks.some(t => t.status === 'todo')}><Play size={14} fill="currentColor" />开始专注</button></div></div></section><section className="panel deadline-panel"><div className="panel-head"><div><h2>即将截止</h2><span className="panel-caption">未来 7 天</span></div><button className="icon-btn small-icon"><MoreHorizontal size={17} /></button></div><div className="deadline-list">{dueTasks.length ? dueTasks.map((task, index) => <div key={task.id}><span className={`date-pill ${index === 0 ? 'today-pill' : ''}`}>{task.deadline?.split(' ')[0] ?? '待定'}</span><div><strong>{task.title}</strong><span>{task.course} · {task.deadline}</span></div><b className={index === 0 ? 'urgent' : ''}>{index === 0 ? '紧急' : `${index + 1} 天`}</b></div>) : <div className="table-empty">暂无即将截止任务</div>}</div></section></aside></div>
   </div>
