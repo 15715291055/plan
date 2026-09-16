@@ -1,61 +1,133 @@
 # 知行 · 智能学习计划
 
-项目采用 Vite + React + TypeScript。当前已覆盖“任务/课程 CRUD → 可用时间与固定课程 → 自动排程 → 专注计时与学习记录 → 资料上传与文本分析 → AI 任务确认”的闭环。
+一个面向个人学习安排的 Web 应用。它将课程、任务、空闲时间、固定课程和学习记录整合在一起，使用可解释的规则自动生成学习计划；可选接入 Supabase 实现登录、跨设备同步，以及使用用户自己的 DeepSeek Key 辅助分析学习内容。
 
-## 本地运行
+## 功能
 
-本工作区已将依赖放在 `D:\study-planner-node_modules`，项目内的 `node_modules` 只是目录联接；npm 缓存位于 `D:\study-planner-cache`。
+- 课程与任务管理：新增、编辑、删除课程和任务；任务可暂不归属课程。
+- 自动排程：避开固定课程和不可用时间，保留缓冲时间，按截止时间、优先级和难度安排任务。
+- 完成方式：支持一次性完成、必须连续完成，以及指定天数的多日分摊。
+- 进度追踪：专注计时和学习记录会累计已完成分钟数；再次排程只安排剩余时长。
+- 多周视野：排程最多覆盖未来 28 天；锁定或已完成的时间块不会在重排中被移动。
+- 计划视图：查看每周时间块，以及新增、移动、保留和冲突等排程结果。
+- 资料与 AI：上传 PDF、DOCX、PPTX 或图片，提取可用文本后生成待确认的任务草稿；也可输入本周学习内容生成草稿。
+- 云端同步：使用 Supabase Auth、PostgreSQL 和 RLS 隔离各用户的课程、任务、日程、资料和学习记录。
+- 个性化界面：支持风格切换、面板不透明度、按时段问候和每日英语名言。
+
+## 技术栈
+
+- React 18、TypeScript、Vite
+- Motion、Lucide React
+- Supabase Auth / PostgreSQL / Storage
+- Vercel Serverless Functions
+- DeepSeek API（可选）
+
+## 快速开始
+
+前置要求：Node.js 18 或更新版本、npm。
 
 ```bash
+git clone https://github.com/15715291055/plan.git
+cd plan
+npm install
 npm run dev
 ```
 
-如需重新安装依赖，请将 npm 缓存设为 `D:\study-planner-cache`，并把生成的 `node_modules` 移回 `D:\study-planner-node_modules` 后重新建立目录联接。
+开发服务器默认运行在 `http://localhost:5173`。
 
-构建检查：
+### 常用命令
 
 ```bash
-npm run build
+npm run typecheck  # TypeScript 类型检查
+npm run lint       # 类型检查与源码安全扫描
+npm test           # 排程器和每日问候的自动化测试
+npm run build      # 生成生产构建
+npm run preview    # 本地预览生产构建
 ```
 
-`npm run typecheck` 执行 TypeScript 检查，`npm run lint` 会先检查类型并扫描源码中的服务端密钥误提交，`npm test` 执行无外部依赖的契约冒烟测试。
+## 环境变量
 
-## 接入 Supabase
-
-第一阶段的数据适配已经内置在 `src/lib/data.ts`。配置以下 Vite 变量后，应用会读取当前登录用户的 Supabase 数据；未登录或未配置时会明确显示“本地数据”，并继续使用浏览器本地存储：
+复制 `.env.example` 为 `.env.local`，仅在本地填写变量。不要提交 `.env` 或任何密钥。
 
 ```env
+# 前端公开配置：匿名 key 由 Supabase RLS 保护
 VITE_SUPABASE_URL=https://your-project.supabase.co
 VITE_SUPABASE_ANON_KEY=your-anon-key
-```
 
-在 Supabase SQL Editor 中执行 [`supabase/schema.sql`](supabase/schema.sql)，它会创建课程、任务、可用时间、固定课程、计划、资料、学习记录、每周输入和用户偏好表，并为用户数据启用 RLS；同时创建私有 `materials` Storage bucket。
-
-前端只需要在本地 `.env` 或 `.env.local` 中配置以下变量（这些文件已被 `.gitignore` 忽略，不能提交到 GitHub）：
-
-```env
-VITE_SUPABASE_URL=https://your-project.supabase.co
-VITE_SUPABASE_ANON_KEY=your-anon-key
+# 服务端模型配置
 DEEPSEEK_BASE_URL=https://api.deepseek.com
 DEEPSEEK_MODEL=deepseek-chat
+# 可选：用于课表图片识别的视觉模型
+DEEPSEEK_VISION_MODEL=
+
+# 仅部署在 Vercel 服务端，绝不能以 VITE_ 前缀暴露
+SUPABASE_URL=https://your-project.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=
+DEEPSEEK_KEY_ENCRYPTION_KEY=
 ```
 
-DeepSeek API Key 不放在 `.env`、Vercel 环境变量或数据库中。每位用户登录后，在“设置 → DeepSeek API Key”中自行填写；密钥只存在当前页面的 React 内存，调用 `/api/analyze-weekly-content` 或 `/api/analyze-material` 时通过请求头发送，刷新页面后需要重新填写。API 路由不会记录或持久化该密钥。
+`DEEPSEEK_KEY_ENCRYPTION_KEY` 必须是 64 位随机十六进制字符串，例如：
 
-### 每日问候与名言
+```bash
+openssl rand -hex 32
+```
 
-首页按浏览器当地时间显示问候：05:00–10:59 早上好，11:00–13:59 中午好，14:00–17:59 下午好，其余时间为晚上好。英语名言每天更换，按每月 1–31 日循环，每月 1 日从第一句重新开始（短月份按实际天数使用）。页面在分钟边界及恢复前台时自动更新，无需刷新。
+## Supabase 配置
 
-### 窗口不透明度
+1. 创建 Supabase 项目，并在 Authentication 中启用 Email 登录方式。
+2. 在 SQL Editor 中执行 [`supabase/schema.sql`](supabase/schema.sql)。该脚本会创建表、索引、RLS 策略和私有 `materials` Storage bucket。
+3. 配置 `VITE_SUPABASE_URL` 和 `VITE_SUPABASE_ANON_KEY`，启动应用后注册或登录账户。
+4. 对生产部署，另外配置服务端专用的 `SUPABASE_URL`、`SUPABASE_SERVICE_ROLE_KEY` 与 `DEEPSEEK_KEY_ENCRYPTION_KEY`。
 
-在设置页左侧、“学习偏好”下方拖动“窗口不透明度”滑杆，可在 0%–100% 之间连续调节面板背景与毛玻璃效果，文字和按钮保持清晰。0% 时关闭面板的背景滤镜、染色、反光和阴影，避免背景图产生局部色差。选择立即生效并保存在当前浏览器，刷新后保留，无需点击“保存设置”。
+未配置 Supabase 或未登录时，应用会使用浏览器本地存储作为本地模式；数据不会自动同步到其他设备。
 
-### 云端数据验收
+## 排程规则
 
-1. 在 Supabase SQL Editor 执行 schema，并在 Authentication → Providers 中开启 Email。
-2. 将 `VITE_SUPABASE_URL` 和 `VITE_SUPABASE_ANON_KEY` 配置到 Vercel 的 Production、Preview、Development 环境后重新部署。
-3. 注册账户（若开启邮箱确认，先点击确认邮件再登录），在“设置”中添加可用时间和固定课程。
-4. 新建课程和任务，点击“重新排程”，刷新页面确认数据仍存在；再用第二个账户确认看不到第一个账户的数据。
-5. 上传 PDF/DOCX/PPTX，填写自己的 DeepSeek Key，等待“待确认”，确认任务后检查任务库和周计划。
+排程器是纯函数，实现在 [`src/lib/scheduler.ts`](src/lib/scheduler.ts)，并由 [`scripts/scheduler.test.ts`](scripts/scheduler.test.ts) 覆盖关键规则。
 
-服务端只读取 `DEEPSEEK_BASE_URL` 与 `DEEPSEEK_MODEL` 这类非敏感配置。不要在 `.env`、日志、截图或提交记录中放入 DeepSeek Key、Supabase service-role key 或其他用户密钥。
+1. 保留已完成与锁定的时间块；“保持原计划”策略还会保留其他已安排块。
+2. 从可学习时段中扣除固定课程、不可用时间和每日缓冲比例。
+3. 常规策略按截止时间、优先级、难度排序；紧急策略优先处理优先级更高的任务。
+4. 任务按默认学习块分割，跳过过短的碎片时间；可在块之间预留休息，空间紧张时以按期完成为先。
+5. 多日任务按指定天数分配，且不会超出该天数；一次性任务可要求必须存在足够长的连续空档。
+6. 排程最长查看未来 28 天。有截止时间的任务不会排到截止时间之后。
+7. 容量不足时，保留已成功安排的部分，并返回缺少时间或连续空档的冲突说明。
+
+## AI 与隐私
+
+- DeepSeek Key 由用户在应用设置中输入；服务端使用 `DEEPSEEK_KEY_ENCRYPTION_KEY` 加密后保存到当前用户的受保护记录中。
+- 调用 AI 路由时，密钥只在服务端解密使用，不会写入前端代码、日志或公开环境变量。
+- AI 产出始终以可编辑草稿呈现；用户确认前不会写入任务库。
+- 不要在 GitHub、截图、浏览器控制台或客户端存储中暴露 `SUPABASE_SERVICE_ROLE_KEY`、DeepSeek Key 或加密密钥。
+
+## 部署到 Vercel
+
+1. 将仓库导入 Vercel，构建命令使用 `npm run build`。
+2. 在 Vercel 的 Production、Preview、Development 环境中配置本 README 所列变量。
+3. 前端变量只使用 `VITE_SUPABASE_URL` 和 `VITE_SUPABASE_ANON_KEY`；其他变量必须保持服务端私有。
+4. 每次推送 `main` 分支会触发生产部署。
+
+部署后请验证：注册/登录、任务和课程同步、重新排程、资料上传、学习记录，以及第二个账户无法读取第一个账户的数据。
+
+## 项目结构
+
+```text
+api/                 Vercel API 路由与 DeepSeek 服务端代理
+src/
+  components/        界面组件与背景效果
+  lib/data.ts        本地/Supabase 数据适配层
+  lib/scheduler.ts   可测试的确定性排程器
+  main.tsx           应用页面与交互流程
+supabase/schema.sql  数据库、RLS 与 Storage 配置
+scripts/             自动化测试和静态检查脚本
+```
+
+## 已知限制
+
+- 周计划目前不支持通过拖拽直接移动时间块；可先在任务编辑中调整任务，再重新排程。
+- AI 分析取决于用户自行配置的模型权限与额度；图片课表分析需要兼容的视觉模型。
+- 生产环境应完成 RLS、邮件确认和多账户隔离验证后再用于真实数据。
+
+## 许可证
+
+本仓库当前未声明开源许可证。除非获得权利人的明确授权，请勿复制、分发或用于商业用途。
