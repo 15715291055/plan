@@ -207,20 +207,34 @@ h1 { color: #162333; font-size: 28px; line-height: 1.2; letter-spacing: -.7px; }
 .profile-button:focus-visible,.button:focus-visible,.nav-item:focus-visible { outline: 2px solid #e6ba70; outline-offset: 3px; }.icon-btn:hover { color: #e6ba70; background: rgba(230,186,112,.1); }.modal-backdrop { background: rgba(3,9,17,.72); backdrop-filter: blur(10px); }.modal { color: #d9e4ed; background: rgba(16,29,43,.94); border: 1px solid rgba(215,232,245,.15); box-shadow: 0 26px 90px rgba(0,0,0,.55); }.modal h2 { color: #f4f7fa; }.modal label { color: #aebdca; }.modal input,.modal select { color: #edf4f8; background: rgba(255,255,255,.06); border-color: rgba(215,232,245,.16); }.modal input:focus,.modal select:focus { border-color: #7fbbc2; box-shadow: 0 0 0 3px rgba(127,187,194,.16); }
 
 /* Acrylic task surfaces: translucent material, edge reflection, and readable data layers. */
-.panel,.stat-card,.course-card,.upload-zone,.empty-state,.week-calendar,.ai-input-panel { position: relative; isolation: isolate; background: linear-gradient(135deg, rgba(39,65,84,var(--window-opacity, .84)), rgba(13,28,43,var(--window-opacity, .84))); border: 1px solid rgba(217,236,248,.19); box-shadow: inset 0 1px 0 rgba(255,255,255,.13), inset 1px 0 0 rgba(177,221,230,.05), 0 18px 44px rgba(0,7,17,.24); backdrop-filter: blur(calc(22px * var(--window-opacity, .84))) saturate(138%); -webkit-backdrop-filter: blur(calc(22px * var(--window-opacity, .84))) saturate(138%); }
+.panel,.stat-card,.course-card,.upload-zone,.empty-state,.week-calendar,.ai-input-panel { position: relative; isolation: isolate; background: linear-gradient(135deg, rgba(39,65,84,var(--window-opacity, .84)), rgba(13,28,43,var(--window-opacity, .84))); border: 1px solid rgba(217,236,248,.19); box-shadow: inset 0 1px 0 rgba(255,255,255,calc(.13 * var(--window-opacity, .84))), inset 1px 0 0 rgba(177,221,230,calc(.05 * var(--window-opacity, .84))), 0 18px 44px rgba(0,7,17,calc(.24 * var(--window-opacity, .84))); backdrop-filter: blur(calc(22px * var(--window-opacity, .84))) saturate(calc(100% + 38% * var(--window-opacity, .84))); -webkit-backdrop-filter: blur(calc(22px * var(--window-opacity, .84))) saturate(calc(100% + 38% * var(--window-opacity, .84))); }
 .panel::before,.stat-card::before,.course-card::before,.upload-zone::before,.empty-state::before,.week-calendar::before { content: ''; position: absolute; z-index: -1; inset: 0; pointer-events: none; border-radius: inherit; opacity: var(--window-opacity, .84); background: linear-gradient(120deg, rgba(255,255,255,.1), transparent 23%, transparent 74%, rgba(111,191,202,.06)); }
-.task-list,.material-list,.deadline-list,.settings-list { border-color: rgba(221,237,247,.11); }.task-row,.material-list > div,.deadline-list > div,.settings-list-row { background: rgba(8,20,32,.08); border-color: rgba(221,237,247,.09); }.task-row:hover,.material-list > div:hover { background: rgba(116,174,188,.14); }.table-head,.time-axis,.day-head { background: rgba(217,236,248,.06); border-color: rgba(221,237,247,.11); }.day-body { background-image: linear-gradient(to bottom, transparent 49px, rgba(221,237,247,.10) 50px); }.day-column,.time-axis,.day-head { border-color: rgba(221,237,247,.11); }
+.task-list,.material-list,.deadline-list,.settings-list { border-color: rgba(221,237,247,.11); }.task-row,.material-list > div,.deadline-list > div,.settings-list-row { background: rgba(8,20,32,calc(.08 * var(--window-opacity, .84))); border-color: rgba(221,237,247,.09); }.task-row:hover,.material-list > div:hover { background: rgba(116,174,188,calc(.14 * var(--window-opacity, .84))); }.table-head,.time-axis,.day-head { background: rgba(217,236,248,calc(.06 * var(--window-opacity, .84))); border-color: rgba(221,237,247,.11); }.day-body { background-image: linear-gradient(to bottom, transparent 49px, rgba(221,237,247,.10) 50px); }.day-column,.time-axis,.day-head { border-color: rgba(221,237,247,.11); }
 @media (max-width: 720px) { .shan-hai-background::before { background: linear-gradient(180deg, rgba(7,14,24,.67), rgba(7,14,24,.84)); }.sidebar { background: rgba(9,17,28,.92); } }
 
 
 /* Let the adjustable panel surface show through its task content. */
 .task-panel .task-row, .task-panel .add-row { background: transparent; }
 .task-panel .add-row { color: #a8b7c5; }
-.task-panel .task-row:hover, .task-panel .add-row:hover { background: rgba(116,174,188,.14); }
+.task-panel .task-row:hover, .task-panel .add-row:hover { background: rgba(116,174,188,calc(.14 * var(--window-opacity, .84))); }
 @media (max-width: 720px) {
   .sidebar { position: fixed; z-index: 10; }
   .settings-layout { grid-template-columns: minmax(0, 1fr); }
   .settings-stack { min-width: 0; }
   .settings-panel .segmented { flex-wrap: wrap; }
   .settings-panel .range-row input { min-width: 0; max-width: 100%; }
+}
+
+
+/* At zero opacity, panel material must not recolor the scene beneath it. */
+.app-shell[data-transparent-panels="true"] :is(.panel, .stat-card, .course-card, .upload-zone, .empty-state, .week-calendar, .ai-input-panel) {
+  background: transparent;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  box-shadow: none;
+  border-color: transparent;
+}
+.app-shell[data-transparent-panels="true"] :is(.panel, .stat-card, .course-card, .upload-zone, .empty-state, .week-calendar)::before,
+.app-shell[data-transparent-panels="true"] .stat-card::after {
+  opacity: 0;
 }
