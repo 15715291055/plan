@@ -42,6 +42,10 @@ DEEPSEEK_MODEL=deepseek-chat
 
 DeepSeek API Key 不放在 `.env`、Vercel 环境变量或数据库中。每位用户登录后，在“设置 → DeepSeek API Key”中自行填写；密钥只存在当前页面的 React 内存，调用 `/api/analyze-weekly-content` 或 `/api/analyze-material` 时通过请求头发送，刷新页面后需要重新填写。API 路由不会记录或持久化该密钥。
 
+### 窗口不透明度
+
+在设置页左侧、“学习偏好”下方拖动“窗口不透明度”滑杆，可在 0%–100% 之间连续调节面板背景与毛玻璃效果，文字和按钮保持清晰。选择立即生效并保存在当前浏览器，刷新后保留，无需点击“保存设置”。
+
 ### 云端数据验收
 
 1. 在 Supabase SQL Editor 执行 schema，并在 Authentication → Providers 中开启 Email。

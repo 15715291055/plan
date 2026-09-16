@@ -164,9 +164,12 @@ h1 { color: #162333; font-size: 28px; line-height: 1.2; letter-spacing: -.7px; }
 /* ShanHai visual system */
 .shan-hai-background { position: fixed; inset: 0; z-index: 0; overflow: hidden; pointer-events: none; background: #f7f8fa; }
 .style-two-image, .style-two-overlay { position: absolute; inset: 0; width: 100%; height: 100%; }
-.opacity-control { position: absolute; z-index: 4; top: 138px; right: 38px; display: flex; gap: 8px; align-items: center; padding: 8px 10px; color: #718092; background: rgba(255,255,255,.86); border-radius: 8px; font-size: 10px; pointer-events: auto; }
-.opacity-control input { width: 120px; accent-color: #2673e8; }
-.opacity-control b { min-width: 30px; color: #2566bd; }
+.opacity-control { display: grid; grid-template-columns: 1fr auto; gap: 8px; padding: 12px; margin: 4px 0 8px; color: #dce8f3; background: rgba(12,22,34,.8); border: 1px solid rgba(217,236,248,.19); border-radius: 7px; font-size: 11px; }
+.opacity-control output { color: #a8d5dc; font-variant-numeric: tabular-nums; }
+.opacity-control input { grid-column: 1 / -1; width: 100%; min-width: 0; margin: 0; height: 28px; accent-color: #7fbbc2; cursor: pointer; }
+.opacity-control input:focus-visible { outline: 2px solid #e6ba70; outline-offset: 3px; border-radius: 4px; }
+.opacity-scale { grid-column: 1 / -1; display: flex; justify-content: space-between; color: #a8b7c5; font-size: 10px; }
+@media (max-width: 720px) { .settings-nav { flex-wrap: wrap; overflow: visible; } .opacity-control { flex: 1 0 100%; box-sizing: border-box; } }
 .style-two-image { object-fit: cover; filter: saturate(.82) brightness(.78); }
 .style-two-overlay { background: linear-gradient(110deg, rgba(10,20,31,.56), rgba(15,31,47,.2) 48%, rgba(8,18,29,.4)); }
 .shan-hai-background.style-2 .shan-hai-wash, .shan-hai-background.style-2 .shan-hai-cloud, .shan-hai-background.style-2 .shan-hai-ridges { opacity: 0; }
@@ -177,7 +180,7 @@ h1 { color: #162333; font-size: 28px; line-height: 1.2; letter-spacing: -.7px; }
 .ridge { vector-effect: non-scaling-stroke; }.ridge-back { opacity: .7; }.ridge-mid, .ridge-front { mix-blend-mode: multiply; }.shan-hai-ridges .ridge-mid { stroke-opacity: .5; }.shan-hai-ridges .ridge-front { stroke-opacity: .34; }
 .shan-hai-grain { position: absolute; inset: 0; opacity: .08; mix-blend-mode: multiply; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140' viewBox='0 0 140 140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.8' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.16'/%3E%3C/svg%3E"); }
 .state-materials .shan-hai-wash { background: radial-gradient(ellipse at 73% 16%, #eee5f7 0%, rgba(247,248,250,.58) 42%, rgba(247,248,250,.96) 75%); }.state-review .shan-hai-wash { background: radial-gradient(ellipse at 78% 8%, #dfe9f4 0%, rgba(247,248,250,.58) 42%, rgba(247,248,250,.96) 76%), linear-gradient(145deg,#eff3f8,#f7f8fa); }.emphasis-warm .shan-hai-wash { background: radial-gradient(ellipse at 68% 42%, #fff0db 0%, rgba(247,248,250,.58) 40%, rgba(247,248,250,.96) 76%); }
-.sidebar, .main-content { position: relative; z-index: 1; }.main-content { background: transparent; pointer-events: none; }.main-content button, .main-content input, .main-content textarea, .main-content select, .main-content a { pointer-events: auto; }.topbar { background: rgba(255,255,255,.79); backdrop-filter: blur(18px); }
+.sidebar, .main-content { position: relative; z-index: 1; }.main-content { background: transparent; }.topbar { background: rgba(255,255,255,.79); backdrop-filter: blur(18px); }
 .page { position: relative; }.panel, .stat-card, .course-card, .upload-zone, .empty-state, .week-calendar { background: color-mix(in srgb, rgba(255,255,255,1) calc(var(--window-opacity, .84) * 100%), transparent); backdrop-filter: blur(14px); }.task-row:hover { background: rgba(248,251,254,.72); }
 .sidebar { background: rgba(255,255,255,.9); backdrop-filter: blur(18px); }.profile, .streak { background: rgba(251,252,253,.76); }.modal { backdrop-filter: blur(16px); }
 .view-transition { min-height: 1px; }.spin { animation: spin .9s linear infinite; } @keyframes spin { to { transform: rotate(360deg); } }
@@ -204,7 +207,20 @@ h1 { color: #162333; font-size: 28px; line-height: 1.2; letter-spacing: -.7px; }
 .profile-button:focus-visible,.button:focus-visible,.nav-item:focus-visible { outline: 2px solid #e6ba70; outline-offset: 3px; }.icon-btn:hover { color: #e6ba70; background: rgba(230,186,112,.1); }.modal-backdrop { background: rgba(3,9,17,.72); backdrop-filter: blur(10px); }.modal { color: #d9e4ed; background: rgba(16,29,43,.94); border: 1px solid rgba(215,232,245,.15); box-shadow: 0 26px 90px rgba(0,0,0,.55); }.modal h2 { color: #f4f7fa; }.modal label { color: #aebdca; }.modal input,.modal select { color: #edf4f8; background: rgba(255,255,255,.06); border-color: rgba(215,232,245,.16); }.modal input:focus,.modal select:focus { border-color: #7fbbc2; box-shadow: 0 0 0 3px rgba(127,187,194,.16); }
 
 /* Acrylic task surfaces: translucent material, edge reflection, and readable data layers. */
-.panel,.stat-card,.course-card,.upload-zone,.empty-state,.week-calendar,.ai-input-panel { position: relative; isolation: isolate; background: linear-gradient(135deg, rgba(39,65,84,.57), rgba(13,28,43,.68)); border: 1px solid rgba(217,236,248,.19); box-shadow: inset 0 1px 0 rgba(255,255,255,.13), inset 1px 0 0 rgba(177,221,230,.05), 0 18px 44px rgba(0,7,17,.24); backdrop-filter: blur(22px) saturate(138%); -webkit-backdrop-filter: blur(22px) saturate(138%); }
-.panel::before,.stat-card::before,.course-card::before,.upload-zone::before,.empty-state::before,.week-calendar::before { content: ''; position: absolute; z-index: -1; inset: 0; pointer-events: none; border-radius: inherit; background: linear-gradient(120deg, rgba(255,255,255,.1), transparent 23%, transparent 74%, rgba(111,191,202,.06)); }
+.panel,.stat-card,.course-card,.upload-zone,.empty-state,.week-calendar,.ai-input-panel { position: relative; isolation: isolate; background: linear-gradient(135deg, rgba(39,65,84,var(--window-opacity, .84)), rgba(13,28,43,var(--window-opacity, .84))); border: 1px solid rgba(217,236,248,.19); box-shadow: inset 0 1px 0 rgba(255,255,255,.13), inset 1px 0 0 rgba(177,221,230,.05), 0 18px 44px rgba(0,7,17,.24); backdrop-filter: blur(calc(22px * var(--window-opacity, .84))) saturate(138%); -webkit-backdrop-filter: blur(calc(22px * var(--window-opacity, .84))) saturate(138%); }
+.panel::before,.stat-card::before,.course-card::before,.upload-zone::before,.empty-state::before,.week-calendar::before { content: ''; position: absolute; z-index: -1; inset: 0; pointer-events: none; border-radius: inherit; opacity: var(--window-opacity, .84); background: linear-gradient(120deg, rgba(255,255,255,.1), transparent 23%, transparent 74%, rgba(111,191,202,.06)); }
 .task-list,.material-list,.deadline-list,.settings-list { border-color: rgba(221,237,247,.11); }.task-row,.material-list > div,.deadline-list > div,.settings-list-row { background: rgba(8,20,32,.08); border-color: rgba(221,237,247,.09); }.task-row:hover,.material-list > div:hover { background: rgba(116,174,188,.14); }.table-head,.time-axis,.day-head { background: rgba(217,236,248,.06); border-color: rgba(221,237,247,.11); }.day-body { background-image: linear-gradient(to bottom, transparent 49px, rgba(221,237,247,.10) 50px); }.day-column,.time-axis,.day-head { border-color: rgba(221,237,247,.11); }
 @media (max-width: 720px) { .shan-hai-background::before { background: linear-gradient(180deg, rgba(7,14,24,.67), rgba(7,14,24,.84)); }.sidebar { background: rgba(9,17,28,.92); } }
+
+
+/* Let the adjustable panel surface show through its task content. */
+.task-panel .task-row, .task-panel .add-row { background: transparent; }
+.task-panel .add-row { color: #a8b7c5; }
+.task-panel .task-row:hover, .task-panel .add-row:hover { background: rgba(116,174,188,.14); }
+@media (max-width: 720px) {
+  .sidebar { position: fixed; z-index: 10; }
+  .settings-layout { grid-template-columns: minmax(0, 1fr); }
+  .settings-stack { min-width: 0; }
+  .settings-panel .segmented { flex-wrap: wrap; }
+  .settings-panel .range-row input { min-width: 0; max-width: 100%; }
+}
