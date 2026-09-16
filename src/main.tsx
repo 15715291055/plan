@@ -453,7 +453,7 @@ function App() {
   const timerLabel = `${String(Math.floor(timerSeconds / 60)).padStart(2, '0')}:${String(timerSeconds % 60).padStart(2, '0')}`
   const backgroundState: ShanHaiState = active === 'review' || active === 'settings' || active === 'today' || active === 'week' || active === 'tasks' || active === 'courses' || active === 'materials' ? active : 'today'
 
-  return <div className={`app-shell ${sidebarCollapsed ? 'sidebar-collapsed' : ''} ${visualStyle}`} data-transparent-panels={windowOpacity === 0} style={{ '--window-opacity': windowOpacity / 100 } as React.CSSProperties}>
+  return <div className={`app-shell ${sidebarCollapsed ? 'sidebar-collapsed' : ''} ${visualStyle}`} data-transparent-panels={windowOpacity === 0} data-api-key-saved={hasSavedDeepSeekKey} style={{ '--window-opacity': windowOpacity / 100 } as React.CSSProperties}>
     <ShanHaiBackground state={backgroundState} visualStyle={visualStyle} emphasis={toast.includes('临时任务') ? 'warm' : 'none'} />
     <aside className={`sidebar ${mobileOpen ? 'mobile-open' : ''}`}>
       <div className="brand"><span className="brand-mark"><Sparkles size={16} /></span><span className="sidebar-label">行</span><span className="brand-sub sidebar-label">STUDY OS</span><button className="sidebar-toggle icon-btn" onClick={() => setSidebarCollapsed(value => !value)} aria-label={sidebarCollapsed ? '展开任务栏' : '收起任务栏'}>{sidebarCollapsed ? <PanelLeftOpen size={17} /> : <PanelLeftClose size={17} />}</button></div>
