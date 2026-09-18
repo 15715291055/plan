@@ -1,132 +1,166 @@
-# 行（Study Planner）项目交接文档
+# “行”学习计划项目交接文档
 
-## 1. 当前任务
+> 更新日期：2026-09-18（Asia/Shanghai）
+> 面向对象：完全没有此前上下文的新 Codex 会话
+> 项目目录：`C:\Users\31454\Documents\ChatGPT\学习计划网页`
 
-这是一个面向学生的 AI 学习计划网页，产品名称为“行”。目标是让用户导入课程表、课本课件、图片和每周学习内容，由 DeepSeek 解析课程、任务、难度、优先级和预计时长，再由内置排程算法生成每日/每周计划。用户也可以随时添加临时任务，系统会避开固定课程和不可用时间。
+## 1. 我们在做什么
 
-当前视觉方向：极简现代学习空间 + 抽象流动山海背景，参考 Linear、Notion、Arc、Framer。使用黄昏欧洲雪山湖畔氛围、云雾渐变、湖面暮色、暖光和半透明亚克力面板，但避免宣纸、毛笔、印章、卷轴等明显国风元素。
+这是一个名为“行”的个人学习计划 Web 应用。用户可以管理课程、固定活动、学习资料和任务，设置不可用时间与学习偏好，并由内置的可解释排程算法自动生成计划；也可以使用自己的 DeepSeek API Key 分析课表、资料和每周学习内容。
 
-## 2. 项目位置与远程仓库
+当前主线有两部分：持续完善并发布 Web 版，保证本地、GitHub 和 Vercel 云端同步；评估将现有 React/Vite 网页封装为 Android APK。APK 尚未开始实现，目前只完成了方案和工作量评估。
 
-- 本地项目：`C:\Users\31454\Documents\Codex\2026-09-14\w\work\plan-check`
-- GitHub：`https://github.com/15715291055/plan`
+用户明确要求：以后每次代码修改都要“一条龙”完成，即 **修改 → 验证 → Git 提交 → 推送 GitHub → 确认 Vercel 生产部署**。不能只改本地，也不能在没有证据时声称云端已更新。
+
+## 2. 仓库与当前状态
+
+- 本地目录：`C:\Users\31454\Documents\ChatGPT\学习计划网页`
+- GitHub：<https://github.com/15715291055/plan.git>
 - 默认分支：`main`
-- 本地开发：在项目目录运行 `npm run dev`，Vite 通常会启动在 `http://127.0.0.1:5173/` 或相邻端口。
+- 当前提交：`cb77c8d fix: show saved API key status after refresh`
+- 当前 `origin/main` 也指向 `cb77c8d`，截至交接时 GitHub 已同步。
+- README 记录的生产网址：<https://plan-lovat-sigma.vercel.app/>
+- 最近一次已知的 Vercel 部署网址：<https://plan-4qe66uhrf-ray-01cd.vercel.app>
+- 工作区当前有未跟踪目录：`output/`。它不是本轮功能代码，不要未经确认直接加入提交。
+- `.env` 存在于本地且受 `.gitignore` 忽略，绝不能提交或展示其中的密钥。
 
-## 3. 已完成的功能
+## 3. 已完成内容
 
-- 今日计划、每周计划、任务管理、课程管理、学习资料、学习复盘、设置页面。
-- 任务 CRUD：课程、截止时间、难度、任务类型、预计时长、临时任务。
-- 内置排程算法：按截止时间和优先级安排任务，支持缓冲时间、锁定块、保持原计划/少改动/紧急插入。
-- 固定课程和重复课程：排程时自动避开。
-- 不可用时间模式：设置中的时间段表示不能学习；其余时间自动作为排程窗口，再排除固定课程。
-- 课表图片导入、课表文字导入，DeepSeek 解析后先确认，再写入固定课程、课程和不可用时间，并触发重新排程。
-- 旧版导入数据回填：固定课程没有对应课程时，加载工作区会自动补建“我的课程”。
-- 每周计划同时显示学习任务和固定课程，时间轴延长到 23:00。
-- PDF、DOCX、PPTX 文本提取；资料分析后可确认生成任务。
-- Supabase Auth 登录/注册/退出，用户数据按账户隔离，RLS 已配置。
-- 用户昵称和头像编辑；侧栏个人卡不再显示用户名，只保留头像入口。
-- 收起侧栏，收起状态下图标间距、选中动画和点击反馈已统一。
-- DeepSeek Key 支持按用户加密保存到云端，刷新和换设备登录同一账户后无需重新填写。
-- 当前视觉已保存为“风格 1”，设置中有风格 1/2/3 切换框架，选择保存在浏览器 localStorage。
-- `prefers-reduced-motion` 支持。
+### 基础产品
 
-## 4. 主要代码位置
+- 今日计划、每周计划、任务、课程、资料、复盘、设置等主要页面。
+- Supabase 登录、用户数据隔离、跨设备同步和 RLS。
+- PDF、DOCX、PPTX 文本提取与资料分析；课表图片/文字分析后可确认导入。
+- DeepSeek 分析接口使用用户自己的 Key，由后端代理调用。
 
-- `src/main.tsx`：主 React 应用、页面、导入流程、任务操作、排程触发、风格选择。
-- `src/styles.css`：全局视觉、深色山海背景、亚克力面板、侧栏、动画和响应式布局。
-- `src/lib/data.ts`：Supabase/local 数据访问、Auth、课程/任务/资料/偏好/用户资料、账户 Key API 调用。
+### 视觉与交互
+
+- 风格 2 已使用用户提供的图片作为背景，并保留风格切换框架。
+- 窗口不透明度控制已移动到“学习偏好”同一列，范围 0–100%，支持无级调整和 localStorage 持久化。
+- 已修复滑杆无法拖动、滑动不生效、0% 时残留偏蓝色差的问题。
+- 新增任务弹窗改为弹窗内部滚动，不再撑出页面。
+- 问候语根据早上/中午/晚上变化；英文名言按自然日切换，31 条循环使用。
+- 侧边栏折叠布局、动效和响应式样式已优化。
+
+### 任务与自动排程
+
+- 新任务可以不选择课程，默认“暂不选择课程”；课程选择框配色已优化。
+- 支持一次性完成/分摊到多日、指定分摊天数、优先级、必须连续完成和已完成分钟数。
+- 排程保留完成/锁定块，避开固定课程、固定活动和不可用时间，并预留缓冲比例。
+- 常规排序大致为截止时间更早 → 优先级更高 → 难度更高；紧急插入优先考虑优先级与截止时间。
+- 按学习块长度切分，不越过截止时间；必须连续时找不到足够连续空档则产生冲突。
+- 多日任务按剩余时长和指定天数尽量均匀分布；支持最短有效学习块、块间休息、最长 28 天排程视野、容量不足提示和剩余分钟排程。
+- 排程测试目前共有 12 项。
+
+### API Key 刷新状态
+
+- DeepSeek Key 通过 `/api/deepseek-key` 在服务端 AES-256-GCM 加密后保存到 Supabase。
+- 刷新后不会回显明文，这是安全设计；最新提交 `cb77c8d` 会显示“Key 已安全保存”状态。
+- 前端通过 Supabase JWT 调用后端，由后端读取并解密 Key。
+
+### 文档与验证
+
+- README 已按标准重写，包含功能、技术栈、本地运行、环境变量、Supabase、Vercel、排程规则、安全说明、目录结构和已知限制。
+- 最近一次已知验证：`npm run lint`、`npm test`（12 项）和 `npm run build` 均通过；构建有既有 bundle size warning，但不阻塞发布。
+
+## 4. 关键代码位置
+
+- `src/main.tsx`：主应用、页面、任务弹窗、设置、不透明度、导入流程、API Key 状态。
+- `src/styles.css`：视觉主题、背景、亚克力窗口、0% 透明样式、弹窗滚动和响应式样式。
 - `src/lib/scheduler.ts`：排程核心算法。
-- `src/lib/extract.ts`：PDF/DOCX/PPTX 文本提取。
-- `src/components/ShanHaiBackground.tsx`：山海背景组件。
-- `api/analyze-weekly-content.ts`：每周内容分析接口。
-- `api/analyze-material.ts`：学习资料分析接口。
-- `api/analyze-schedule-text.ts`：课表文字解析接口。
-- `api/analyze-schedule-image.ts`：课表图片解析接口。
-- `api/_deepseek.ts`：验证 Supabase JWT、读取并解密用户 Key。
-- `api/deepseek-key.ts`：保存、查询、删除用户加密 Key。
-- `supabase/schema.sql`：数据库表、RLS、Storage bucket、`user_api_credentials` 表。
-- `.env.example`：环境变量名称示例。
+- `src/lib/data.ts`：Supabase/local 数据访问、认证、Key API 调用。
+- `src/lib/extract.ts`：资料文本提取。
+- `src/components/ShanHaiBackground.tsx`：背景组件与风格切换。
+- `api/deepseek-key.ts`、`api/_deepseek.ts`：Key 状态、加密、JWT 和 DeepSeek 共用逻辑。
+- `api/analyze-*.ts`：课表、资料和每周内容分析接口。
+- `supabase/schema.sql`：数据库表、RLS、Storage 和 `user_api_credentials`。
+- `README.md`：完整安装、配置与部署说明。
 
-## 5. 配置与密钥
+## 5. 当前卡点 / 尚未完成
 
-禁止把真实密钥写进 Git、README 或本文件。
+目前没有代码层面的硬阻塞，Web 版已经提交并推送。尚未闭环的是：
 
-前端环境变量（可公开的 Supabase URL 和 anon key）：
+1. 线上真实账户的端到端验证：需在生产域名登录，验证保存 Key、刷新后的状态，以及四类 AI 分析接口。
+2. Vercel 生产别名核对：部署 URL 和 README 稳定域名不同，下一会话必须确认稳定生产域名指向最新提交，而非只看到 preview URL。
+3. APK 尚未开始：仓库没有 Capacitor/Android 平台代码，也没有生成 APK。
+4. 本机 Android 工具链未知：开始 APK 前需检查 Java、Android SDK、Gradle/Android Studio。
 
-- `VITE_SUPABASE_URL`
-- `VITE_SUPABASE_ANON_KEY`
+## 6. 下一步计划
 
-Vercel 服务端变量：
+### 先闭环 Web 生产验证
 
-- `SUPABASE_URL`
-- `SUPABASE_SERVICE_ROLE_KEY`（高权限，绝不能暴露给前端）
-- `DEEPSEEK_KEY_ENCRYPTION_KEY`（64 位十六进制，AES-256-GCM 用；丢失会无法解密历史 Key）
-- `DEEPSEEK_BASE_URL=https://api.deepseek.com`
-- `DEEPSEEK_MODEL=deepseek-chat`
-- 可选：`DEEPSEEK_VISION_MODEL`
+1. 阅读本文件和 `README.md`。
+2. 执行 `git status --short`、`git log -5 --oneline --decorate`，确认仍在 `main` 且没有覆盖用户改动。
+3. 运行 `npm run lint`、`npm test`、`npm run build`。
+4. 打开生产域名，用真实账户验证：登录 → Key 保存状态 → 刷新 → 课表文字、课表图片、资料分析、每周内容分析。
+5. 核对 Vercel Production 部署的提交 SHA 必须是 `cb77c8d` 或更新提交。
+6. 有问题时完成修改、验证、提交、推送、部署确认全流程。
 
-本地 `.env`/`.env.local` 已被 `.gitignore` 忽略。用户的 DeepSeek Key 不存 localStorage、数据库明文或 Vercel 环境变量；服务端加密后写入 Supabase `user_api_credentials`。
+### 如用户决定做 APK
 
-生成加密密钥：
+推荐 Capacitor 封装现有 React/Vite，而不是重写原生 Android：
+
+1. 检查 Node、Java、Android SDK、Gradle/Android Studio。
+2. 确认交付目标：debug APK，还是签名 release APK/AAB；未指定可先做 debug，但要说明它不是商店发布包。
+3. 添加 `@capacitor/core`、`@capacitor/cli`、`@capacitor/android`，配置 `appId`、`appName`、`webDir`。
+4. 明确 Android WebView 的生产 API 基址。不能假设相对 `/api/...` 在本地 WebView 一定可用；应明确线上 API 地址或加载线上站点，并评估安全与离线影响。
+5. 重点验证手机布局、弹窗、周计划横向滚动、文件选择、返回键、软键盘遮挡和安全区。
+6. DeepSeek Key 继续由服务端加密保存，不要迁移到普通 WebView localStorage；设备端保存应使用原生安全存储插件。
+7. 运行 Web 测试和 Android 构建，真机安装验证后再交付。APK 通常作为构建产物，不直接提交 Git。
+
+估算已向用户说明：仅封装约 10万–25万 tokens；加移动端适配约 25万–50万；加离线、通知、安全存储、签名发布约 50万–100万；结合当前项目约 30万–60万 tokens。Gradle/APK 编译主要消耗本地 CPU、内存、磁盘和网络。
+
+## 7. 环境变量与安全边界
+
+禁止把真实密钥写入 Git、README、日志截图或本文件。
+
+- 前端：`VITE_SUPABASE_URL`、`VITE_SUPABASE_ANON_KEY`。
+- 仅 Vercel 服务端：`SUPABASE_URL`、`SUPABASE_SERVICE_ROLE_KEY`、`DEEPSEEK_KEY_ENCRYPTION_KEY`（64 位十六进制）、`DEEPSEEK_BASE_URL`、`DEEPSEEK_MODEL`，以及可选 `DEEPSEEK_VISION_MODEL`。
+
+若线上 Key API 报“服务端尚未配置”，先检查 Vercel 环境变量和 Supabase `user_api_credentials` 表/RLS，不要让用户反复粘贴 Key，也不要改成前端明文存储。
+
+## 8. 绝对不要再踩的坑
+
+1. 不要只改本地；每次修改必须推送并核对 Production 部署 SHA。
+2. 不要把 preview URL 当生产完成证据；确认稳定生产域名指向最新提交，并让用户硬刷新验证。
+3. 不要明文回显或存储 API Key；刷新后只显示“已安全保存”。
+4. 不要提交 `.env`、service role key、加密密钥或用户 DeepSeek Key。
+5. 不要把未跟踪的 `output/` 顺手加入提交。
+6. 0% 不透明度必须移除背景色、伪元素、边框、阴影和 backdrop-filter；回归 0%、中间值、100%。
+7. 不要让透明度滑杆被覆盖层阻断 pointer 事件；必须真实拖动验证。
+8. 不可用时间必须先转为可排程窗口补集，再排除固定课程/活动。
+9. 不要把“必须连续完成”和“一次性完成”混为一谈；只有明确勾选必须连续时才要求单一连续空档。
+10. 容量不足时仍保存任务并提示未排完分钟数，不能因排程失败回滚创建。
+11. 多日任务不得超过指定天数或截止日期，要按剩余分钟和每日容量计算。
+12. 课表导入不能只写 `fixed_events`，必须同步建立/关联课程。
+13. 周计划不能只看任务块；只有固定课程时也必须显示。
+14. 修改超长 JSX 不要用脆弱 PowerShell 字符串替换；优先 `apply_patch`，改后立即 typecheck。
+15. 不要假设 Playwright/Chromium 一定可用；无法真实 UI 验证时要如实说明。
+16. Git push 失败时不要误报成功；用远端 SHA 证明同步。
+17. 不要覆盖用户已有改动；先看 diff，禁止 `git reset --hard`。
+
+## 9. 标准修改与发布清单
 
 ```powershell
-node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
-```
-
-首次部署/新 Supabase 项目：在 Supabase SQL Editor 执行最新 `supabase/schema.sql`。必须配置 Email Auth，并在 Vercel 同时配置 `SUPABASE_URL` 与 `SUPABASE_SERVICE_ROLE_KEY`，否则账户 Key API 会返回“服务端尚未配置”。
-
-## 6. 常用验证与发布
-
-```powershell
-npm run typecheck
+git status --short
 npm run lint
 npm test
 npm run build
 git diff --check
-git status --short
+git diff --stat
+git add <仅本次相关文件>
+git commit -m "<准确描述>"
 git push origin main
+git status --short
+git log -3 --oneline --decorate
 ```
 
-最近的重要提交：
+推送后必须检查 Vercel Production 状态与提交 SHA，再打开稳定生产域名验证核心流程。只有这些步骤都完成，才能告诉用户“网站已经更新”。
 
-- `cd6bd77`：风格切换框架
-- `bf440ba`：收起侧栏排版
-- `c0c7bf5`：时间轴延长到 23:00
-- `cf1c7ce`：固定课程时间内也允许添加任务
-- `52c8974`：不可用时间排程计算
-- `a288a59`：AI 请求刷新 Supabase 会话
-- `685bb76`：账户级加密保存 DeepSeek Key
+## 10. 新会话第一步
 
-## 7. 已知问题与下一步计划
+```powershell
+cd C:\Users\31454\Documents\ChatGPT\学习计划网页
+```
 
-优先事项：
-
-1. 在真实线上 Vercel 环境验证 `GET/POST/DELETE /api/deepseek-key`，确认服务端三个关键变量已配置。
-2. 登录账户后保存 Key，刷新页面并测试课表文字、课表图片、资料分析和每周内容分析。
-3. 用真实课表验证：课程是否出现在“我的课程”、固定课是否出现在每周计划、任务是否只排在剩余时间。
-4. 设计并实现风格 2、风格 3；当前只是占位选项。
-5. 增加图片 OCR/更稳健的课表识别、资料分析队列取消/重试、日历时间块拖拽编辑和通知提醒。
-6. 补充课程与固定课程的正式关联字段（当前旧数据回填按课程名称匹配）。
-7. 评估 Vite/esbuild 依赖审计警告，升级前验证构建兼容性。
-
-## 8. 踩过的坑（不要重犯）
-
-- 不要把用户 DeepSeek Key 直接放进前端请求头长期传输或写入 localStorage；浏览器请求头遇到中文空格/换行会报 `String contains non ISO-8859-1 code point`。
-- AI 接口现在依赖 Supabase JWT + 服务端解密 Key；如果用户看到“请先登录并在设置中保存 API Key”，先检查登录会话和 Vercel 服务端变量，不要让用户重复粘贴 Key。
-- 修改 `src/main.tsx` 这种超长单行 JSX 时，PowerShell 替换容易写入字面量 `` `r`n `` 并导致 TS1443；修改后必须立刻跑 `npm run typecheck`。
-- 不要把不可用时间继续当作可用时间传给 scheduler；排程前必须通过 `schedulableWindows()` 计算补集。
-- 添加任务和排程必须解耦：没有空档时任务仍要保存，不能因 `runReplan` 抛错而回滚添加。
-- 课表导入不能只写 `fixed_events`；必须同步建立课程，并让周计划显示固定课。
-- `WeekView` 使用 `scheduleItems.length` 分支时要同时合并 `fixedEvents`，否则只有固定课时会回退到空/演示数据。
-- 收起侧栏时不要用固定绝对定位让收起按钮压住头像；需要同时调整 brand、profile、nav 的间距。
-- GitHub 推送偶尔会因网络连接 `github.com:443` 失败；先确认本地提交，再单独重试 `git push origin main`，不要误报线上已更新。
-- 用户截图可能来自旧的 Vercel 部署；先核对提交号和部署状态，再判断线上是否包含最新代码。
-
-## 9. 新会话建议的第一步
-
-1. `cd C:\Users\31454\Documents\Codex\2026-09-14\w\work\plan-check`
-2. 阅读本文件、`git status` 和最近提交。
-3. 运行 `npm run typecheck`。
-4. 如处理线上 API，先核对 Vercel 环境变量和 Supabase SQL 是否已执行，再改代码。
-5. 每次修改后运行必要检查并记录提交号；只有 `git push` 成功后才能告诉用户线上已同步。
+然后阅读本文件和 `README.md`，检查 Git 状态与最新提交。如果用户继续问 APK，从工具链检查与 debug/release 目标确认开始；如果继续反馈网页问题，先在生产域名复现，再按“一条龙”流程修复并发布。
