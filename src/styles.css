@@ -239,7 +239,6 @@ h1 { color: #162333; font-size: 28px; line-height: 1.2; letter-spacing: -.7px; }
   .settings-panel .range-row input { min-width: 0; max-width: 100%; }
 }
 
-
 /* At zero opacity, panel material must not recolor the scene beneath it. */
 .app-shell[data-transparent-panels="true"] :is(.panel, .stat-card, .course-card, .upload-zone, .empty-state, .week-calendar, .ai-input-panel) {
   background: transparent;
@@ -300,3 +299,24 @@ h1 { color: #162333; font-size: 28px; line-height: 1.2; letter-spacing: -.7px; }
 .background-style-option.style-1 .background-style-thumb { background: url('/style-2-background.png') center / cover; }.background-style-option.style-2 .background-style-thumb { background: url('/style-3-background.jpg') center / cover; }.background-style-option.style-3 .background-style-thumb { background: url('/style-4-background.jpg') center / cover; }
 .background-style-option strong { font-size: 11px; }.background-style-option small { color: #9ba5b1; font-size: 9px; }.background-style-option.selected small { color: color-mix(in srgb, var(--scene-primary) 62%, #8793a0); }
 @media (max-width: 720px) { .background-style-options { grid-template-columns: repeat(2, minmax(0, 1fr)); padding: 0 16px; } }
+
+/* Mobile rendering fix: only real touch devices receive this class. */
+.mobile-render-fix body,
+.mobile-render-fix #root,
+.mobile-render-fix .app-shell {
+  background-color: #111c2a;
+}
+
+.mobile-render-fix .app-shell {
+  min-height: 100vh;
+  min-height: 100dvh;
+}
+
+.mobile-render-fix .shan-hai-background {
+  background-color: #111c2a;
+  transform: translateZ(0);
+  -webkit-transform: translateZ(0);
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+  will-change: transform;
+}

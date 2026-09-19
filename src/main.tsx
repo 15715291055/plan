@@ -63,6 +63,20 @@ import { extractMaterialText } from './lib/extract'
 import { greetingFor, quoteFor } from './lib/daily-inspiration'
 import './styles.css'
 
+function isRealMobileDevice(): boolean {
+  const nav = navigator as Navigator & {
+    userAgentData?: { mobile?: boolean }
+  }
+  const mobileUA = /Android|iPhone|iPad|iPod|Mobile|HarmonyOS/i.test(nav.userAgent)
+  const iPadDesktopMode = nav.platform === 'MacIntel' && nav.maxTouchPoints > 1
+  const coarsePointer = window.matchMedia('(pointer: coarse)').matches
+  return Boolean((nav.userAgentData?.mobile === true || mobileUA || iPadDesktopMode) && coarsePointer)
+}
+
+if (isRealMobileDevice()) {
+  document.documentElement.classList.add('mobile-render-fix')
+}
+
 const weekDays = ['周一', '周二', '周三', '周四', '周五', '周六', '周日']
 function parseTimeMinutes(value: string): number { const [hours, minutes] = value.split(':').map(Number); return (hours || 0) * 60 + (minutes || 0) }
 function schedulableWindows(unavailable: AvailabilityRule[]): AvailabilityRule[] {
