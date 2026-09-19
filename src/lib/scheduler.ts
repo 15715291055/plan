@@ -1,10 +1,11 @@
-import type { AvailabilityRule, FixedEvent, ScheduleItem, Task } from './data'
+import type { AvailabilityRule, CapacityProfile, DailyCapacityOverride, FixedEvent, ScheduleItem, Task, UserPreferences } from './data'
 import { localDateKey, minutesBetween } from './date-utils'
+import { getDailyCapacityBreakdown } from './daily-capacity'
 
 export type ReplanStrategy = 'preserve' | 'minimal_change' | 'urgent'
 export type ScheduleChange = { type: 'added' | 'moved' | 'unchanged' | 'conflict'; taskId: string; from?: string; to?: string; reason?: string }
 export type SchedulerResult = { items: ScheduleItem[]; changes: ScheduleChange[]; conflicts: string[] }
-export type SchedulerOptions = { now?: Date; blockMinutes?: number; bufferRatio?: number; strategy?: ReplanStrategy; horizonDays?: number; minBlockMinutes?: number; breakMinutes?: number; peakStartHour?: number; peakEndHour?: number }
+export type SchedulerOptions = { now?: Date; blockMinutes?: number; bufferRatio?: number; strategy?: ReplanStrategy; horizonDays?: number; minBlockMinutes?: number; breakMinutes?: number; peakStartHour?: number; peakEndHour?: number; preferences?: UserPreferences; capacityProfiles?: CapacityProfile[]; dailyCapacityOverrides?: DailyCapacityOverride[] }
 
 type Interval = { start: Date; end: Date }
 type TaskState = { task: Task; remaining: number; initialRemaining: number; deadline: Date; explicitDeadline: boolean; selectedDay?: string; allocatedByDay: Map<string, number>; generated: ScheduleItem[] }
@@ -102,18 +103,17 @@ function expandFixedEvents(fixedEvents: FixedEvent[], monday: Date, horizonDays:
   return intervals
 }
 
-function buildAvailabilityWindows(availability: AvailabilityRule[], monday: Date, now: Date, horizonDays: number, bufferRatio: number): Interval[] {
+function buildAvailabilityWindows(availability: AvailabilityRule[], monday: Date, now: Date, horizonDays: number): Interval[] {
   const windows: Interval[] = []
   for (let day = 0; day < horizonDays; day += 1) {
     const calendarDay = new Date(monday); calendarDay.setDate(monday.getDate() + day)
-    for (const rule of availability.filter(item => item.weekday === calendarDay.getDay())) {
-      const start = dateAtDay(calendarDay, rule.startTime); const end = dateAtDay(calendarDay, rule.endTime)
-      const rawCapacity = end.getTime() - start.getTime(); if (rawCapacity <= 0) continue
-      const bufferedEnd = new Date(end.getTime() - rawCapacity * bufferRatio); const effectiveStart = start < now ? new Date(now) : start
-      if (bufferedEnd.getTime() - effectiveStart.getTime() >= 5 * 60_000) windows.push({ start: effectiveStart, end: bufferedEnd })
-    }
+    const dayStart = dateAtDay(calendarDay, '00:00'); const dayEnd = new Date(dayStart); dayEnd.setDate(dayEnd.getDate() + 1)
+    const blocked = availability.filter(item => item.weekday === calendarDay.getDay()).map(rule => ({ start: dateAtDay(calendarDay, rule.startTime), end: dateAtDay(calendarDay, rule.endTime) })).sort((a, b) => a.start.getTime() - b.start.getTime())
+    let cursor = dayStart
+    blocked.forEach(item => { if (item.start > cursor) windows.push({ start: cursor < now && localDateKey(cursor) === localDateKey(now) ? new Date(now) : cursor, end: item.start }); if (item.end > cursor) cursor = item.end })
+    if (cursor < dayEnd) windows.push({ start: cursor < now && localDateKey(cursor) === localDateKey(now) ? new Date(now) : cursor, end: dayEnd })
   }
-  return windows.sort((a, b) => a.start.getTime() - b.start.getTime())
+  return windows.filter(item => intervalMinutes(item) >= 5).sort((a, b) => a.start.getTime() - b.start.getTime())
 }
 
 function taskDeadline(task: Task, now: Date, horizonEnd: Date): { deadline: Date; explicit: boolean } {
@@ -227,8 +227,15 @@ export function buildSchedule(tasks: Task[], availability: AvailabilityRule[], f
   const minBlockMinutes = Math.min(Math.max(options?.minBlockMinutes ?? 20, 5), blockMinutes); const breakMinutes = Math.min(Math.max(options?.breakMinutes ?? 0, 0), 30)
   const peakStartHour = clamp(options?.peakStartHour ?? 9, 0, 23); const peakEndHour = clamp(options?.peakEndHour ?? 12, peakStartHour + 1, 24); const monday = mondayOf(now); const horizonEnd = new Date(monday.getTime() + horizonDays * DAY_MS)
   const taskById = new Map(tasks.map(task => [task.id, task])); const alwaysRetained = existingItems.filter(item => item.locked || taskById.get(item.taskId)?.status === 'done'); const retained = strategy === 'preserve' ? existingItems : alwaysRetained
-  const retainedIds = new Set(retained.map(item => item.id)); const windows = buildAvailabilityWindows(availability, monday, now, horizonDays, bufferRatio)
-  const capacityIntervals = subtractIntervals(windows, expandFixedEvents(fixedEvents, monday, horizonDays)); const capacityByDay = sumByDay(capacityIntervals)
+  const retainedIds = new Set(retained.map(item => item.id)); const windows = buildAvailabilityWindows(availability, monday, now, horizonDays)
+  const capacityIntervals = subtractIntervals(windows, expandFixedEvents(fixedEvents, monday, horizonDays))
+  const defaultPreferences: UserPreferences = options?.preferences ?? { defaultBlockMinutes: (blockMinutes === 25 || blockMinutes === 90 ? blockMinutes : 50) as 25 | 50 | 90, bufferRatio, autoLog: true, breakMinutes: (breakMinutes === 5 || breakMinutes === 15 ? breakMinutes : 10) as 5 | 10 | 15, minBlockMinutes: (minBlockMinutes === 15 || minBlockMinutes === 25 ? minBlockMinutes : 20) as 15 | 20 | 25, peakStartHour, peakEndHour, baseDailyMinutes: 240, weeklyLoad: { 0: 100, 1: 100, 2: 100, 3: 100, 4: 100, 5: 100, 6: 100 } }
+  const capacityByDay = new Map<string, number>()
+  for (let day = 0; day < horizonDays; day += 1) {
+    const date = new Date(monday); date.setDate(monday.getDate() + day)
+    const breakdown = getDailyCapacityBreakdown({ date, now, preferences: { ...defaultPreferences, bufferRatio }, profiles: options?.capacityProfiles ?? [], overrides: options?.dailyCapacityOverrides ?? [], unavailableRules: availability, fixedEvents, scheduleItems: existingItems })
+    capacityByDay.set(localDateKey(date), breakdown.effectiveCapacityMinutes)
+  }
   const retainedIntervals = retained.map(item => ({ start: new Date(item.startTime), end: new Date(item.endTime) })); let free = subtractIntervals(capacityIntervals, retainedIntervals).sort((a, b) => a.start.getTime() - b.start.getTime())
   const retainedPlannedByDay = new Map<string, number>(); const retainedPlannedByTask = new Map<string, number>()
   retained.forEach(item => {
@@ -236,6 +243,8 @@ export function buildSchedule(tasks: Task[], availability: AvailabilityRule[], f
     const minutes = minutesBetween(item.startTime, item.endTime); const dayKey = localDateKey(new Date(item.startTime))
     retainedPlannedByDay.set(dayKey, (retainedPlannedByDay.get(dayKey) ?? 0) + minutes); retainedPlannedByTask.set(item.taskId, (retainedPlannedByTask.get(item.taskId) ?? 0) + minutes)
   })
+  const usedCapacityByDay = new Map(retainedPlannedByDay)
+  capacityByDay.forEach((limit, key) => { usedCapacityByDay.set(key, Math.min(usedCapacityByDay.get(key) ?? 0, limit)) })
   const states: TaskState[] = tasks.filter(task => task.status !== 'done').map(task => {
     const completed = Math.max(0, task.completedMinutes ?? 0); const alreadyPlanned = retainedPlannedByTask.get(task.id) ?? 0; const remaining = Math.max(0, task.minutes - completed - alreadyPlanned)
     const deadline = taskDeadline(task, now, horizonEnd)
@@ -256,6 +265,8 @@ export function buildSchedule(tasks: Task[], availability: AvailabilityRule[], f
           if (state.selectedDay && state.selectedDay !== dayKey) continue
           if (!state.selectedDay && minutesOnDay(free, dayKey, state.deadline) < state.remaining) continue
         }
+        const capacityRemainingToday = Math.max(0, (capacityByDay.get(dayKey) ?? 0) - (usedCapacityByDay.get(dayKey) ?? 0))
+        if (capacityRemainingToday < minBlockMinutes) continue
         let dailyRemaining: number | undefined
         if (spreadDays) {
           const allocatedToday = state.allocatedByDay.get(dayKey) ?? 0
@@ -264,10 +275,10 @@ export function buildSchedule(tasks: Task[], availability: AvailabilityRule[], f
           dailyRemaining = dailyTarget! - allocatedToday
         }
         const endLimit = state.deadline < interval.end ? state.deadline : interval.end; const available = Math.floor((endLimit.getTime() - interval.start.getTime()) / 60_000)
-        const minimum = Math.min(minBlockMinutes, state.remaining, dailyRemaining ?? Number.MAX_SAFE_INTEGER); if (available < minimum) continue
+        const minimum = Math.min(minBlockMinutes, state.remaining, dailyRemaining ?? Number.MAX_SAFE_INTEGER, capacityRemainingToday); if (available < minimum) continue
         let duration = 0
-        if (state.task.requireContinuous) { if (available < state.remaining) continue; duration = state.remaining }
-        else { duration = chooseDuration(state.remaining, preferred, available, minBlockMinutes, dailyRemaining); if (duration < minimum) continue }
+        if (state.task.requireContinuous) { if (available < state.remaining || capacityRemainingToday < state.remaining || (dailyRemaining !== undefined && dailyRemaining < state.remaining)) continue; duration = state.remaining }
+        else { duration = chooseDuration(state.remaining, preferred, Math.min(available, capacityRemainingToday), minBlockMinutes, dailyRemaining); if (duration < minimum) continue }
         for (const start of candidateStarts(interval, duration, state.deadline, peakStartHour, existingItems.filter(item => item.taskId === state.task.id))) {
           const end = new Date(start.getTime() + duration * 60_000); const base = { state, start, end, duration, dayKey }
           const candidate = { ...base, score: scoreCandidate(base, states, free, targetByDay, plannedByDay, capacityByDay, existingItems, { strategy, peakStartHour, peakEndHour }, now) }
@@ -281,11 +292,12 @@ export function buildSchedule(tasks: Task[], availability: AvailabilityRule[], f
     state.generated.push(item); state.remaining = Math.max(0, state.remaining - duration); state.allocatedByDay.set(dayKey, (state.allocatedByDay.get(dayKey) ?? 0) + duration)
     if ((state.task.completionMode ?? 'smart') === 'single_day' && !state.selectedDay) state.selectedDay = dayKey
     plannedByDay.set(dayKey, (plannedByDay.get(dayKey) ?? 0) + duration)
+    usedCapacityByDay.set(dayKey, (usedCapacityByDay.get(dayKey) ?? 0) + duration)
     let nextFree = subtractIntervals(free, [{ start, end }]); const remainingDemand = states.reduce((sum, itemState) => sum + itemState.remaining, 0)
     if (breakMinutes > 0 && remainingDemand > 0 && nextFree.reduce((sum, interval) => sum + intervalMinutes(interval), 0) >= remainingDemand + breakMinutes) nextFree = subtractIntervals(nextFree, [{ start: end, end: new Date(end.getTime() + breakMinutes * 60_000) }])
     free = nextFree.sort((a, b) => a.start.getTime() - b.start.getTime())
   }
-  states.forEach(state => { if (state.remaining > 0) conflicts.push(state.task.requireContinuous ? `${state.task.title} 缺少连续 ${state.remaining} 分钟的可用时间` : state.explicitDeadline ? `${state.task.title} 在截止时间前还缺少 ${state.remaining} 分钟可用时间` : `${state.task.title} 在当前规划周期内还缺少 ${state.remaining} 分钟可用时间`) })
+  states.forEach(state => { if (state.remaining > 0) { const capacityTotal = Array.from(capacityByDay.values()).reduce((sum, value) => sum + value, 0); const scheduledTotal = Array.from(usedCapacityByDay.values()).reduce((sum, value) => sum + value, 0); const reason = scheduledTotal >= capacityTotal ? '截止日前的每日容量已满' : state.task.requireContinuous ? `缺少连续 ${state.remaining} 分钟的可用时间` : state.explicitDeadline ? `在截止时间前还缺少 ${state.remaining} 分钟可用时间` : `在当前规划周期内还缺少 ${state.remaining} 分钟可用时间`; conflicts.push(`${state.task.title} 还缺 ${state.remaining} 分钟；${reason}`) } })
   const items = [...retained, ...states.flatMap(state => state.generated)].filter((item, index, all) => all.findIndex(other => other.id === item.id) === index).sort((a, b) => a.startTime.localeCompare(b.startTime))
   const conflictIds = new Set(states.filter(state => state.remaining > 0).map(state => state.task.id)); const changes: ScheduleChange[] = []
   tasks.forEach(task => {

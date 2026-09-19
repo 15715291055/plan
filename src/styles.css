@@ -291,6 +291,15 @@ h1 { color: #162333; font-size: 28px; line-height: 1.2; letter-spacing: -.7px; }
 @media (prefers-reduced-motion: reduce) { .app-shell, .app-shell :is(.sidebar, .topbar, .panel, .stat-card, .course-card, .week-calendar, .upload-zone, .empty-state, .filter-btn, .search, .button, .nav-item, .progress-line i, .load-bar i, .bar), .heatmap-cell { transition: none; } }
 
 .background-style-panel { max-width: 890px; margin: 0 0 18px; padding-bottom: 18px; }
+.capacity-settings { display: grid; gap: 14px; max-width: 890px; margin-top: 18px; }
+.weekly-load-list { display: grid; gap: 10px; margin: 18px 0; }
+.weekly-load-row { display: grid; grid-template-columns: 48px minmax(120px, 1fr) 145px; align-items: center; gap: 12px; color: #526171; font-size: 11px; }
+.weekly-load-row input { min-width: 0; accent-color: #2673e8; }
+.weekly-load-row strong { color: #4b8a7c; font-size: 11px; text-align: right; white-space: nowrap; }
+.capacity-mode-form, .daily-override-form { flex-wrap: wrap; }
+.capacity-mode-form input, .daily-override-form input, .daily-override-form select { min-width: 120px; flex: 1 1 130px; }
+.capacity-source-badge { display: inline-block; margin-top: 9px; padding: 3px 6px; color: #4b8a7c; background: rgba(75,138,124,.13); border-radius: 4px; font-size: 9px; }
+.load-bar.overloaded i { background: #d45d58; }
 .settings-stack > .settings-panel:first-child { display: none; }
 .background-style-options { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; padding: 0 24px; }
 .background-style-option { display: grid; grid-template-columns: 42px 1fr; grid-template-rows: 1fr 1fr; column-gap: 9px; align-items: center; min-height: 55px; padding: 6px 8px; color: #617080; background: rgba(255,255,255,.64); border: 1px solid #e2e7ed; border-radius: 8px; text-align: left; transition: .25s ease; }
@@ -300,6 +309,7 @@ h1 { color: #162333; font-size: 28px; line-height: 1.2; letter-spacing: -.7px; }
 .background-style-option.style-1 .background-style-thumb { background: url('/style-2-background.png') center / cover; }.background-style-option.style-2 .background-style-thumb { background: url('/style-3-background.jpg') center / cover; }.background-style-option.style-3 .background-style-thumb { background: url('/style-4-background.jpg') center / cover; }
 .background-style-option strong { font-size: 11px; }.background-style-option small { color: #9ba5b1; font-size: 9px; }.background-style-option.selected small { color: color-mix(in srgb, var(--scene-primary) 62%, #8793a0); }
 @media (max-width: 720px) { .background-style-options { grid-template-columns: repeat(2, minmax(0, 1fr)); padding: 0 16px; } }
+@media (max-width: 720px) { .weekly-load-row { grid-template-columns: 42px minmax(0, 1fr); gap: 8px; }.weekly-load-row strong { grid-column: 2; text-align: left; }.capacity-mode-form input, .daily-override-form input, .daily-override-form select { min-width: 0; flex-basis: 100%; } }
 
 /* Mobile rendering fix: only real touch devices receive this class. */
 .mobile-render-fix body,

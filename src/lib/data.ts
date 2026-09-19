@@ -44,6 +44,8 @@ export type WorkspaceData = {
   materials: Material[]
   studyLogs: StudyLog[]
   preferences: UserPreferences
+  capacityProfiles: CapacityProfile[]
+  dailyCapacityOverrides: DailyCapacityOverride[]
   profile: UserProfile
   source: 'supabase' | 'local'
   error?: string
@@ -56,7 +58,30 @@ export type MaterialTask = { title: string; estimated_minutes: number; difficult
 export type MaterialAnalysis = { chapters: string[]; knowledge_points: string[]; tasks: MaterialTask[]; summary: string }
 export type Material = { id: string; fileName: string; fileType: string; fileSize?: number; status: string; course?: string; createdAt: string; storagePath?: string; analysisResult?: MaterialAnalysis }
 export type StudyLog = { id: string; taskId: string; plannedMinutes?: number; actualMinutes?: number; quality?: number; completedAt?: string }
-export type UserPreferences = { defaultBlockMinutes: 25 | 50 | 90; bufferRatio: number; autoLog: boolean; breakMinutes: 5 | 10 | 15; minBlockMinutes: 15 | 20 | 25; peakStartHour: number; peakEndHour: number }
+export type Weekday = 0 | 1 | 2 | 3 | 4 | 5 | 6
+export type WeeklyLoad = Record<Weekday, number>
+export type CapacityProfile = {
+  id: string
+  name: string
+  startDate: string
+  endDate: string
+  baseDailyMinutes?: number
+  weeklyLoad: Partial<WeeklyLoad>
+  priority: number
+  enabled: boolean
+  createdAt?: string
+  updatedAt?: string
+}
+export type DailyCapacityOverride = {
+  id: string
+  date: string
+  loadPercent?: number
+  capacityMinutes?: number
+  reason?: string
+  createdAt?: string
+  updatedAt?: string
+}
+export type UserPreferences = { defaultBlockMinutes: 25 | 50 | 90; bufferRatio: number; autoLog: boolean; breakMinutes: 5 | 10 | 15; minBlockMinutes: 15 | 20 | 25; peakStartHour: number; peakEndHour: number; baseDailyMinutes: number; weeklyLoad: WeeklyLoad }
 export type UserProfile = { displayName: string; avatarUrl?: string }
 
 export type ScheduleInput = {
@@ -89,7 +114,8 @@ const taskCompletionSchema = z.object({
 })
 
 const courseColors = ['#2673e8', '#e47735', '#2a9b83', '#d84d78', '#8d68c3', '#b38a32']
-export const defaultPreferences: UserPreferences = { defaultBlockMinutes: 50, bufferRatio: 0.15, autoLog: true, breakMinutes: 10, minBlockMinutes: 20, peakStartHour: 9, peakEndHour: 12 }
+export const defaultWeeklyLoad: WeeklyLoad = { 0: 100, 1: 100, 2: 100, 3: 100, 4: 100, 5: 100, 6: 100 }
+export const defaultPreferences: UserPreferences = { defaultBlockMinutes: 50, bufferRatio: 0.15, autoLog: true, breakMinutes: 10, minBlockMinutes: 20, peakStartHour: 9, peakEndHour: 12, baseDailyMinutes: 240, weeklyLoad: defaultWeeklyLoad }
 export const defaultUserProfile: UserProfile = { displayName: '学习者', avatarUrl: '' }
 
 export const demoCourses: Course[] = [
@@ -106,8 +132,9 @@ export const demoTasks: Task[] = [
   { id: 'task-eigen', title: '线性代数 · 特征值预习', course: '线性代数', courseId: demoCourses[2].id, color: '#2a9b83', deadline: '周三', minutes: 45, priority: 55, difficulty: '中等', status: 'done', type: '预习', slot: '15:00', source: 'manual' },
 ]
 
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string | undefined
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined
+const runtimeEnv = (import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env
+const supabaseUrl = runtimeEnv?.VITE_SUPABASE_URL
+const supabaseAnonKey = runtimeEnv?.VITE_SUPABASE_ANON_KEY
 export const supabaseConfigured = Boolean(supabaseUrl && supabaseAnonKey)
 export const supabase: SupabaseClient | null = supabaseConfigured ? createClient(supabaseUrl!, supabaseAnonKey!) : null
 
@@ -202,6 +229,8 @@ function localPreferences(): UserPreferences {
       minBlockMinutes: parsed.minBlockMinutes === 15 || parsed.minBlockMinutes === 25 ? parsed.minBlockMinutes : 20,
       peakStartHour: Number.isInteger(parsed.peakStartHour) ? Math.min(Math.max(parsed.peakStartHour ?? 9, 0), 23) : 9,
       peakEndHour: Number.isInteger(parsed.peakEndHour) ? Math.min(Math.max(parsed.peakEndHour ?? 12, 1), 24) : 12,
+      baseDailyMinutes: Number.isInteger(parsed.baseDailyMinutes) ? Math.min(Math.max(parsed.baseDailyMinutes ?? 240, 0), 1440) : 240,
+      weeklyLoad: Object.fromEntries([0, 1, 2, 3, 4, 5, 6].map(day => [day, Number.isInteger(parsed.weeklyLoad?.[day as Weekday]) ? Math.min(Math.max(parsed.weeklyLoad?.[day as Weekday] ?? 100, 0), 200) : 100])) as WeeklyLoad,
     }
   } catch { return defaultPreferences }
 }
@@ -252,9 +281,19 @@ function localWorkspace(): WorkspaceData {
     materials: localMaterials(),
     studyLogs: localStudyLogs(),
     preferences: localPreferences(),
+    capacityProfiles: localCapacityProfiles(),
+    dailyCapacityOverrides: localDailyCapacityOverrides(),
     profile: localUserProfile(),
     source: 'local',
   }
+}
+
+function localCapacityProfiles(): CapacityProfile[] {
+  try { return JSON.parse(localStorage.getItem('study-capacity-profiles') ?? '[]') as CapacityProfile[] } catch { return [] }
+}
+
+function localDailyCapacityOverrides(): DailyCapacityOverride[] {
+  try { return JSON.parse(localStorage.getItem('study-daily-capacity-overrides') ?? '[]') as DailyCapacityOverride[] } catch { return [] }
 }
 
 function formatDeadline(value: string | null): string {
@@ -298,7 +337,7 @@ export async function loadWorkspace(): Promise<WorkspaceData> {
   if (!supabase) return localWorkspace()
   const userId = await currentUserId(supabase)
   if (!userId) return { ...localWorkspace(), error: 'Supabase 已配置，但当前没有登录用户，暂时使用本地数据。' }
-  const [courseResult, taskResult, availabilityResult, fixedResult, scheduleResult, materialResult, logResult, preferencesResult, profileResult] = await Promise.all([
+  const [courseResult, taskResult, availabilityResult, fixedResult, scheduleResult, materialResult, logResult, preferencesResult, profileResult, profileModesResult, overrideResult] = await Promise.all([
     supabase.from('courses').select('*').order('created_at'),
     supabase.from('tasks').select('*').order('deadline', { ascending: true, nullsFirst: false }),
     supabase.from('availability_rules').select('*').order('weekday'),
@@ -306,8 +345,10 @@ export async function loadWorkspace(): Promise<WorkspaceData> {
     supabase.from('schedule_items').select('id,task_id,start_time,end_time,locked,status,schedules!inner(is_active)').eq('schedules.is_active', true),
     supabase.from('materials').select('id,file_name,file_type,file_size,status,storage_path,analysis_result,created_at,courses(name)').order('created_at', { ascending: false }),
     supabase.from('study_logs').select('id,task_id,planned_minutes,actual_minutes,quality,completed_at').order('completed_at', { ascending: false }),
-    supabase.from('user_preferences').select('default_block_minutes,buffer_ratio,auto_log').maybeSingle(),
+    supabase.from('user_preferences').select('default_block_minutes,buffer_ratio,auto_log,break_minutes,min_block_minutes,peak_start_hour,peak_end_hour,base_daily_minutes,load_sun,load_mon,load_tue,load_wed,load_thu,load_fri,load_sat').maybeSingle(),
     supabase.from('user_profiles').select('display_name,avatar_url').maybeSingle(),
+    supabase.from('capacity_profiles').select('*').order('priority', { ascending: false }).order('updated_at', { ascending: false }),
+    supabase.from('daily_capacity_overrides').select('*').order('override_date'),
   ])
   const firstError = [courseResult, taskResult, availabilityResult, fixedResult, scheduleResult, materialResult, logResult].find(result => result.error)?.error
   if (firstError) return { ...localWorkspace(), error: `数据库读取失败：${firstError.message}` }
@@ -323,11 +364,15 @@ export async function loadWorkspace(): Promise<WorkspaceData> {
       defaultBlockMinutes: Number(preferencesResult.data?.default_block_minutes) === 25 || Number(preferencesResult.data?.default_block_minutes) === 90 ? Number(preferencesResult.data?.default_block_minutes) as 25 | 90 : 50,
       bufferRatio: Math.min(Math.max(Number(preferencesResult.data?.buffer_ratio ?? defaultPreferences.bufferRatio), 0), 0.3),
       autoLog: preferencesResult.data?.auto_log !== false,
-      breakMinutes: defaultPreferences.breakMinutes,
-      minBlockMinutes: defaultPreferences.minBlockMinutes,
-      peakStartHour: defaultPreferences.peakStartHour,
-      peakEndHour: defaultPreferences.peakEndHour,
+      breakMinutes: Number(preferencesResult.data?.break_minutes) === 5 || Number(preferencesResult.data?.break_minutes) === 15 ? Number(preferencesResult.data?.break_minutes) as 5 | 15 : 10,
+      minBlockMinutes: Number(preferencesResult.data?.min_block_minutes) === 15 || Number(preferencesResult.data?.min_block_minutes) === 25 ? Number(preferencesResult.data?.min_block_minutes) as 15 | 25 : 20,
+      peakStartHour: Number.isInteger(preferencesResult.data?.peak_start_hour) ? preferencesResult.data?.peak_start_hour ?? 9 : 9,
+      peakEndHour: Number.isInteger(preferencesResult.data?.peak_end_hour) ? preferencesResult.data?.peak_end_hour ?? 12 : 12,
+      baseDailyMinutes: Number(preferencesResult.data?.base_daily_minutes ?? 240),
+      weeklyLoad: { 0: Number(preferencesResult.data?.load_sun ?? 100), 1: Number(preferencesResult.data?.load_mon ?? 100), 2: Number(preferencesResult.data?.load_tue ?? 100), 3: Number(preferencesResult.data?.load_wed ?? 100), 4: Number(preferencesResult.data?.load_thu ?? 100), 5: Number(preferencesResult.data?.load_fri ?? 100), 6: Number(preferencesResult.data?.load_sat ?? 100) },
     },
+    capacityProfiles: profileModesResult.error ? [] : (profileModesResult.data ?? []).map(row => ({ id: row.id, name: row.name, startDate: row.start_date, endDate: row.end_date, baseDailyMinutes: row.base_daily_minutes ?? undefined, weeklyLoad: { 0: row.load_sun, 1: row.load_mon, 2: row.load_tue, 3: row.load_wed, 4: row.load_thu, 5: row.load_fri, 6: row.load_sat }, priority: row.priority ?? 0, enabled: row.enabled !== false, createdAt: row.created_at, updatedAt: row.updated_at })),
+    dailyCapacityOverrides: overrideResult.error ? [] : (overrideResult.data ?? []).map(row => ({ id: row.id, date: row.override_date, loadPercent: row.load_percent ?? undefined, capacityMinutes: row.capacity_minutes ?? undefined, reason: row.reason ?? undefined, createdAt: row.created_at, updatedAt: row.updated_at })),
     profile: profileResult.error ? defaultUserProfile : {
       displayName: profileResult.data?.display_name?.trim() || defaultUserProfile.displayName,
       avatarUrl: profileResult.data?.avatar_url ?? '',
@@ -519,12 +564,25 @@ export async function savePreferences(input: UserPreferences): Promise<UserPrefe
     minBlockMinutes: z.union([z.literal(15), z.literal(20), z.literal(25)]),
     peakStartHour: z.number().int().min(0).max(23),
     peakEndHour: z.number().int().min(1).max(24),
+    baseDailyMinutes: z.number().int().min(0).max(1440),
+    weeklyLoad: z.object({ 0: z.number().int().min(0).max(200), 1: z.number().int().min(0).max(200), 2: z.number().int().min(0).max(200), 3: z.number().int().min(0).max(200), 4: z.number().int().min(0).max(200), 5: z.number().int().min(0).max(200), 6: z.number().int().min(0).max(200) }),
   }).parse(input)
   if (!supabase || !(await currentUserId(supabase))) return parsed
-  const { data, error } = await supabase.from('user_preferences').upsert({ default_block_minutes: parsed.defaultBlockMinutes, buffer_ratio: parsed.bufferRatio, auto_log: parsed.autoLog }, { onConflict: 'user_id' }).select('default_block_minutes,buffer_ratio,auto_log').single()
+  const { data, error } = await supabase.from('user_preferences').upsert({ default_block_minutes: parsed.defaultBlockMinutes, buffer_ratio: parsed.bufferRatio, auto_log: parsed.autoLog, break_minutes: parsed.breakMinutes, min_block_minutes: parsed.minBlockMinutes, peak_start_hour: parsed.peakStartHour, peak_end_hour: parsed.peakEndHour, base_daily_minutes: parsed.baseDailyMinutes, load_sun: parsed.weeklyLoad[0], load_mon: parsed.weeklyLoad[1], load_tue: parsed.weeklyLoad[2], load_wed: parsed.weeklyLoad[3], load_thu: parsed.weeklyLoad[4], load_fri: parsed.weeklyLoad[5], load_sat: parsed.weeklyLoad[6] }, { onConflict: 'user_id' }).select('*').single()
   if (error) throw error
   return { ...parsed, defaultBlockMinutes: data.default_block_minutes, bufferRatio: Number(data.buffer_ratio), autoLog: data.auto_log }
 }
+
+function capacityProfileRow(input: Omit<CapacityProfile, 'id' | 'createdAt' | 'updatedAt'>) {
+  return { name: input.name, start_date: input.startDate, end_date: input.endDate, base_daily_minutes: input.baseDailyMinutes ?? null, load_sun: input.weeklyLoad[0] ?? null, load_mon: input.weeklyLoad[1] ?? null, load_tue: input.weeklyLoad[2] ?? null, load_wed: input.weeklyLoad[3] ?? null, load_thu: input.weeklyLoad[4] ?? null, load_fri: input.weeklyLoad[5] ?? null, load_sat: input.weeklyLoad[6] ?? null, priority: input.priority, enabled: input.enabled }
+}
+const capacityProfileInput = z.object({ name: z.string().trim().min(1).max(40), startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/), endDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/), baseDailyMinutes: z.number().int().min(0).max(1440).optional(), weeklyLoad: z.record(z.number().int().min(0).max(200)), priority: z.number().int().min(-100).max(100), enabled: z.boolean() }).refine(value => value.startDate <= value.endDate, '开始日期不能晚于结束日期')
+export async function createCapacityProfile(input: Omit<CapacityProfile, 'id' | 'createdAt' | 'updatedAt'>): Promise<CapacityProfile> { const parsed = capacityProfileInput.parse(input); const local = { id: `local-capacity-profile-${Date.now()}`, ...parsed }; if (!supabase || !(await currentUserId(supabase))) return local; const { data, error } = await supabase.from('capacity_profiles').insert(capacityProfileRow(parsed)).select('*').single(); if (error) throw error; return { ...parsed, id: data.id, createdAt: data.created_at, updatedAt: data.updated_at } }
+export async function updateCapacityProfile(id: string, input: Omit<CapacityProfile, 'id' | 'createdAt' | 'updatedAt'>): Promise<CapacityProfile> { const parsed = capacityProfileInput.parse(input); if (!supabase || id.startsWith('local-') || !(await currentUserId(supabase))) return { id, ...parsed }; const { data, error } = await supabase.from('capacity_profiles').update({ ...capacityProfileRow(parsed), updated_at: new Date().toISOString() }).eq('id', id).select('*').single(); if (error) throw error; return { ...parsed, id: data.id, createdAt: data.created_at, updatedAt: data.updated_at } }
+export async function deleteCapacityProfile(id: string): Promise<void> { if (!supabase || id.startsWith('local-') || !(await currentUserId(supabase))) return; const { error } = await supabase.from('capacity_profiles').delete().eq('id', id); if (error) throw error }
+const capacityOverrideInput = z.object({ date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/), loadPercent: z.number().int().min(0).max(200).optional(), capacityMinutes: z.number().int().min(0).max(1440).optional(), reason: z.string().max(120).optional() }).refine(value => (value.loadPercent !== undefined) !== (value.capacityMinutes !== undefined), '必须选择负载比例或直接时长')
+export async function upsertDailyCapacityOverride(input: Omit<DailyCapacityOverride, 'id' | 'createdAt' | 'updatedAt'>): Promise<DailyCapacityOverride> { const parsed = capacityOverrideInput.parse(input); const local = { id: `local-capacity-override-${parsed.date}`, ...parsed }; if (!supabase || !(await currentUserId(supabase))) return local; const { data, error } = await supabase.from('daily_capacity_overrides').upsert({ override_date: parsed.date, load_percent: parsed.loadPercent ?? null, capacity_minutes: parsed.capacityMinutes ?? null, reason: parsed.reason ?? null, updated_at: new Date().toISOString() }, { onConflict: 'user_id,override_date' }).select('*').single(); if (error) throw error; return { id: data.id, date: data.override_date, loadPercent: data.load_percent ?? undefined, capacityMinutes: data.capacity_minutes ?? undefined, reason: data.reason ?? undefined, createdAt: data.created_at, updatedAt: data.updated_at } }
+export async function deleteDailyCapacityOverride(id: string): Promise<void> { if (!supabase || id.startsWith('local-')) return; if (!await currentUserId(supabase)) return; const { error } = await supabase.from('daily_capacity_overrides').delete().eq('id', id); if (error) throw error }
 
 export async function saveUserProfile(input: UserProfile): Promise<UserProfile> {
   const parsed = z.object({
@@ -550,7 +608,7 @@ export async function saveWeeklyInput(input: { weekStart: string; rawText: strin
   if (error) throw error
 }
 
-export function persistLocal(tasks: Task[], courses: Course[], extras?: Pick<WorkspaceData, 'availability' | 'fixedEvents' | 'scheduleItems' | 'materials' | 'studyLogs' | 'preferences'>) {
+export function persistLocal(tasks: Task[], courses: Course[], extras?: Pick<WorkspaceData, 'availability' | 'fixedEvents' | 'scheduleItems' | 'materials' | 'studyLogs' | 'preferences' | 'capacityProfiles' | 'dailyCapacityOverrides'>) {
   localStorage.setItem('study-tasks', JSON.stringify(tasks))
   localStorage.setItem('study-courses', JSON.stringify(courses))
   if (extras) {
@@ -560,5 +618,7 @@ export function persistLocal(tasks: Task[], courses: Course[], extras?: Pick<Wor
     localStorage.setItem('study-materials', JSON.stringify(extras.materials))
     localStorage.setItem('study-logs', JSON.stringify(extras.studyLogs))
     localStorage.setItem('study-preferences', JSON.stringify(extras.preferences))
+    localStorage.setItem('study-capacity-profiles', JSON.stringify(extras.capacityProfiles))
+    localStorage.setItem('study-daily-capacity-overrides', JSON.stringify(extras.dailyCapacityOverrides))
   }
 }
