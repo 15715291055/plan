@@ -245,3 +245,39 @@ h1 { color: #162333; font-size: 28px; line-height: 1.2; letter-spacing: -.7px; }
 .app-shell[data-transparent-panels="true"] .stat-card::after {
   opacity: 0;
 }
+
+/* Shared scene palette: style switches recolor all primary interactions together. */
+.app-shell { --scene-primary: #2673e8; --scene-primary-hover: #1a5abc; --scene-soft: #edf4ff; --scene-ring: #8eb5f2; --heatmap-empty: rgba(111, 148, 184, .16); --heatmap-1: #c6dcf4; --heatmap-2: #8ab9ed; --heatmap-3: #4d8fdd; --heatmap-4: #2368c5; transition: color .45s ease, background-color .45s ease; }
+.app-shell.style-2 { --scene-primary: #4c9ba0; --scene-primary-hover: #347d82; --scene-soft: rgba(101, 181, 181, .17); --scene-ring: #7fc2c5; --heatmap-empty: rgba(183, 218, 218, .16); --heatmap-1: #b8ded9; --heatmap-2: #7fc3bd; --heatmap-3: #4a9e99; --heatmap-4: #236f70; }
+.app-shell.style-3 { --scene-primary: #8768c5; --scene-primary-hover: #6b4da7; --scene-soft: rgba(151, 122, 207, .16); --scene-ring: #b09ae3; --heatmap-empty: rgba(177, 156, 219, .17); --heatmap-1: #d5c8ef; --heatmap-2: #b49add; --heatmap-3: #8d6dc6; --heatmap-4: #62469f; }
+.app-shell .button.primary, .app-shell .check-box.checked, .app-shell .switch.on, .app-shell .nav-badge { background: var(--scene-primary); }
+.app-shell .button.primary:hover { background: var(--scene-primary-hover); }
+.app-shell .nav-item.active, .app-shell .segmented button.selected { color: var(--scene-primary); background: var(--scene-soft); border-color: var(--scene-ring); }
+.app-shell .nav-item:hover, .app-shell .text-btn, .app-shell .icon-btn:hover { color: var(--scene-primary); }
+.app-shell .progress-line i, .app-shell .load-bar i, .app-shell .bar { background: linear-gradient(180deg, color-mix(in srgb, var(--scene-primary) 62%, white), var(--scene-primary)); }
+.app-shell :is(.sidebar, .topbar, .panel, .stat-card, .course-card, .week-calendar, .upload-zone, .empty-state, .filter-btn, .search, .button, .nav-item, .progress-line i, .load-bar i, .bar) { transition: background-color .45s ease, border-color .45s ease, color .45s ease, box-shadow .45s ease; }
+
+/* Interactive annual learning heatmap. */
+.heatmap-panel { margin-top: 14px; overflow: hidden; }
+.study-heatmap { padding: 20px; }
+.heatmap-summary { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; }
+.heatmap-summary h2 { color: #253445; font-size: 14px; }
+.heatmap-summary > strong { color: var(--scene-primary); font-size: 21px; letter-spacing: -.4px; white-space: nowrap; transition: color .45s ease; }
+.heatmap-summary strong small { color: #8e9aa7; font-size: 11px; font-weight: 500; letter-spacing: 0; }
+.heatmap-scroll { --heatmap-cell: 12px; overflow-x: auto; padding: 18px 0 3px; scrollbar-color: color-mix(in srgb, var(--scene-primary) 52%, transparent) transparent; }
+.heatmap-months { display: grid; column-gap: 3px; width: max-content; margin-left: 24px; min-width: calc(100% - 24px); }
+.heatmap-months span { color: #9aa6b3; font-size: 9px; line-height: 1; white-space: nowrap; }
+.heatmap-body { display: flex; gap: 6px; margin-top: 7px; min-width: max-content; }
+.heatmap-weekdays, .heatmap-week { display: grid; grid-template-rows: repeat(7, var(--heatmap-cell)); gap: 3px; }
+.heatmap-weekdays { width: 18px; }
+.heatmap-weekdays span { height: var(--heatmap-cell); color: #a0aab5; font-size: 8px; line-height: var(--heatmap-cell); text-align: right; }
+.heatmap-weeks { display: grid; column-gap: 3px; width: max-content; }
+.heatmap-cell { width: var(--heatmap-cell); height: var(--heatmap-cell); padding: 0; border: 0; border-radius: 3px; background: var(--heatmap-empty); transition: transform .16s ease, background-color .45s ease, box-shadow .16s ease; }
+.heatmap-cell:hover, .heatmap-cell:focus-visible { transform: scale(1.32); outline: 0; box-shadow: 0 0 0 2px color-mix(in srgb, var(--scene-primary) 45%, transparent); z-index: 1; }
+.heatmap-cell.selected { box-shadow: 0 0 0 2px color-mix(in srgb, var(--scene-primary) 75%, white); }
+.heatmap-cell.future { opacity: .42; }
+.heatmap-cell.level-1 { background: var(--heatmap-1); }.heatmap-cell.level-2 { background: var(--heatmap-2); }.heatmap-cell.level-3 { background: var(--heatmap-3); }.heatmap-cell.level-4 { background: var(--heatmap-4); }
+.heatmap-footer { display: flex; align-items: center; justify-content: space-between; gap: 16px; min-height: 27px; margin-top: 15px; color: #8f9ba7; font-size: 10px; }
+.heatmap-legend { display: flex; align-items: center; gap: 4px; white-space: nowrap; }.heatmap-legend small { color: #9ca7b3; font-size: 9px; }.heatmap-legend i { width: 11px; height: 11px; border-radius: 3px; background: var(--heatmap-empty); }.heatmap-legend .level-1 { background: var(--heatmap-1); }.heatmap-legend .level-2 { background: var(--heatmap-2); }.heatmap-legend .level-3 { background: var(--heatmap-3); }.heatmap-legend .level-4 { background: var(--heatmap-4); }
+@media (max-width: 720px) { .study-heatmap { padding: 16px; }.heatmap-footer { align-items: flex-start; flex-direction: column; gap: 9px; }.heatmap-scroll { --heatmap-cell: 11px; } }
+@media (prefers-reduced-motion: reduce) { .app-shell, .app-shell :is(.sidebar, .topbar, .panel, .stat-card, .course-card, .week-calendar, .upload-zone, .empty-state, .filter-btn, .search, .button, .nav-item, .progress-line i, .load-bar i, .bar), .heatmap-cell { transition: none; } }
