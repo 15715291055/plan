@@ -352,8 +352,33 @@ function App() {
       throw error
     }
   }
+  async function saveCurrentDeepSeekKey(notify = true): Promise<void> {
+    const key = normalizedDeepSeekKey(deepSeekKey)
+    if (!/^[\x21-\x7e]{20,300}$/.test(key)) throw new Error('DeepSeek API Key 含有无效字符，请重新粘贴')
+    await saveDeepSeekKey(key)
+    setDeepSeekKey('')
+    setHasSavedDeepSeekKey(true)
+    if (notify) setToast('DeepSeek API Key 已加密保存到当前账户')
+  }
+  async function ensureDeepSeekKey(): Promise<boolean> {
+    try {
+      if (normalizedDeepSeekKey(deepSeekKey)) {
+        await saveCurrentDeepSeekKey(false)
+        return true
+      }
+      const response = await fetch('/api/deepseek-key', { headers: await apiRequestHeaders() })
+      const result = await response.json() as { configured?: boolean; error?: string }
+      const configured = response.ok && Boolean(result.configured)
+      setHasSavedDeepSeekKey(configured)
+      if (configured) return true
+      setToast(result.error ?? '请先在设置中输入并保存 DeepSeek API Key')
+    } catch (error) {
+      setToast(error instanceof Error ? error.message : 'DeepSeek API Key 保存失败，请重试')
+    }
+    return false
+  }
   async function analyzeScheduleImage(file: File) {
-    if (!hasSavedDeepSeekKey) { setToast('请先登录并在设置中保存 DeepSeek API Key'); return }
+    if (!(await ensureDeepSeekKey())) return
     if (!file.type.startsWith('image/')) { setToast('请上传 JPG、PNG 或 WebP 格式的课表图片'); return }
     try {
       const image = await compressImageForVision(file)
@@ -365,7 +390,7 @@ function App() {
     } catch (error) { setToast(error instanceof Error ? error.message : '课表识别失败') }
   }
   async function analyzeScheduleText(content: string) {
-    if (!hasSavedDeepSeekKey) { setToast('请先登录并在设置中保存 DeepSeek API Key'); return }
+    if (!(await ensureDeepSeekKey())) return
     try {
       const response = await fetch('/api/analyze-schedule-text', { method: 'POST', headers: await apiRequestHeaders(), body: JSON.stringify({ content }) })
       const payload = await response.json() as ScheduleImportResult & { error?: string }
@@ -466,7 +491,7 @@ function App() {
     finally { setReplanning(false) }
   }
   async function analyzeWeeklyContent(content: string) {
-    if (!hasSavedDeepSeekKey) { setToast('请先登录并在设置中保存 DeepSeek API Key'); return }
+    if (!(await ensureDeepSeekKey())) return
     setAiBusy(true)
     try {
       const response = await fetch('/api/analyze-weekly-content', { method: 'POST', headers: await apiRequestHeaders(), body: JSON.stringify({ content, courses: courses.map(course => course.name) }) })
@@ -518,7 +543,7 @@ function App() {
       {active === 'courses' && <ViewTransition key="courses"><CoursesView courses={courses} onAdd={() => setShowCourseModal(true)} onEdit={setEditingCourse} onDelete={removeCourse} /></ViewTransition>}
       {active === 'materials' && <ViewTransition key="materials"><MaterialsView materials={materials} onToast={setToast} onUpload={handleUpload} onDelete={removeMaterial} onReview={reviewMaterial} /></ViewTransition>}
       {active === 'review' && <ViewTransition key="review"><ReviewView tasks={tasks} studyLogs={studyLogs} /></ViewTransition>}
-      {active === 'settings' && <ViewTransition key="settings"><><SettingsView windowOpacity={windowOpacity} onWindowOpacityChange={updateWindowOpacity} visualStyle={visualStyle} onVisualStyleChange={setVisualStyle} profile={profile} availability={availability} fixedEvents={fixedEvents} preferences={preferences} capacityProfiles={capacityProfiles} dailyCapacityOverrides={dailyCapacityOverrides} onAddCapacityProfile={addCapacityProfile} onUpdateCapacityProfile={editCapacityProfile} onDeleteCapacityProfile={removeCapacityProfile} onSaveDailyOverride={saveDailyOverride} onDeleteDailyOverride={removeDailyOverride} deepSeekKey={deepSeekKey} hasSavedDeepSeekKey={hasSavedDeepSeekKey} onDeepSeekKeyChange={setDeepSeekKey} onSaveDeepSeekKey={async () => { const key = normalizedDeepSeekKey(deepSeekKey); if (!/^[\x21-\x7e]{20,300}$/.test(key)) throw new Error('DeepSeek API Key 含有无效字符，请重新粘贴'); await saveDeepSeekKey(key); setDeepSeekKey(''); setHasSavedDeepSeekKey(true); setToast('DeepSeek API Key 已加密保存到当前账户') }} onDeleteDeepSeekKey={async () => { await deleteDeepSeekKey(); setDeepSeekKey(''); setHasSavedDeepSeekKey(false); setToast('已删除账户保存的 DeepSeek API Key') }} onSavePreferences={updatePreferences} onSaveProfile={updateProfile} onImportSchedule={() => setShowScheduleImport(true)} onAddAvailability={addAvailability} onUpdateAvailability={editAvailability} onDeleteAvailability={removeAvailability} onAddFixedEvent={addFixedEvent} onUpdateFixedEvent={editFixedEvent} onDeleteFixedEvent={removeFixedEvent} onAuthChange={refreshWorkspace} /><input id="schedule-image-import" hidden type="file" accept="image/png,image/jpeg,image/webp" onChange={event => { const file = event.target.files?.[0]; event.currentTarget.value = ''; if (file) void analyzeScheduleImage(file) }} /></></ViewTransition>}
+      {active === 'settings' && <ViewTransition key="settings"><><SettingsView windowOpacity={windowOpacity} onWindowOpacityChange={updateWindowOpacity} visualStyle={visualStyle} onVisualStyleChange={setVisualStyle} profile={profile} availability={availability} fixedEvents={fixedEvents} preferences={preferences} capacityProfiles={capacityProfiles} dailyCapacityOverrides={dailyCapacityOverrides} onAddCapacityProfile={addCapacityProfile} onUpdateCapacityProfile={editCapacityProfile} onDeleteCapacityProfile={removeCapacityProfile} onSaveDailyOverride={saveDailyOverride} onDeleteDailyOverride={removeDailyOverride} deepSeekKey={deepSeekKey} hasSavedDeepSeekKey={hasSavedDeepSeekKey} onDeepSeekKeyChange={setDeepSeekKey} onSaveDeepSeekKey={saveCurrentDeepSeekKey} onDeleteDeepSeekKey={async () => { await deleteDeepSeekKey(); setDeepSeekKey(''); setHasSavedDeepSeekKey(false); setToast('已删除账户保存的 DeepSeek API Key') }} onSavePreferences={updatePreferences} onSaveProfile={updateProfile} onImportSchedule={() => setShowScheduleImport(true)} onAddAvailability={addAvailability} onUpdateAvailability={editAvailability} onDeleteAvailability={removeAvailability} onAddFixedEvent={addFixedEvent} onUpdateFixedEvent={editFixedEvent} onDeleteFixedEvent={removeFixedEvent} onAuthChange={refreshWorkspace} /><input id="schedule-image-import" hidden type="file" accept="image/png,image/jpeg,image/webp" onChange={event => { const file = event.target.files?.[0]; event.currentTarget.value = ''; if (file) void analyzeScheduleImage(file) }} /></></ViewTransition>}
       {active === 'settings' && <ViewTransition key="background-style"><BackgroundStyleChooser visualStyle={visualStyle} onChange={setVisualStyle} /><DailyCapacitySettings preferences={preferences} profiles={capacityProfiles} overrides={dailyCapacityOverrides} onSavePreferences={updatePreferences} onAddProfile={addCapacityProfile} onUpdateProfile={editCapacityProfile} onDeleteProfile={removeCapacityProfile} onSaveOverride={saveDailyOverride} onDeleteOverride={removeDailyOverride} /></ViewTransition>}
       </AnimatePresence>
     </main>
