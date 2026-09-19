@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { buildSchedule } from '../src/lib/scheduler'
+import { localDateKey } from '../src/lib/date-utils'
 import type { FixedEvent, ScheduleItem, Task } from '../src/lib/data'
 
 const task = (id: string, minutes: number, deadlineIso?: string): Task => ({
@@ -86,4 +87,65 @@ test('plans beyond the current week for tasks with a later deadline', () => {
   const result = buildSchedule([taskNextWeek], availability, [], [], { now, bufferRatio: 0, horizonDays: 28 })
   assert.equal(result.conflicts.length, 0)
   assert.ok(result.items[0].startTime.slice(0, 10) >= '2026-09-14')
+})
+
+test('smart mode balances ordinary tasks across dates', () => {
+  const current = new Date('2026-09-19T14:00:00+08:00')
+  const rules = [
+    { id: 'sat', weekday: 6, startTime: '14:00', endTime: '22:00' },
+    { id: 'sun', weekday: 0, startTime: '09:00', endTime: '22:00' },
+    { id: 'mon', weekday: 1, startTime: '09:00', endTime: '22:00' },
+    { id: 'tue', weekday: 2, startTime: '09:00', endTime: '22:00' },
+    { id: 'wed', weekday: 3, startTime: '09:00', endTime: '22:00' },
+  ]
+  const result = buildSchedule([task('a', 50), task('b', 50), task('c', 50), task('d', 30)].map(item => ({ ...item, completionMode: 'smart' as const, deadlineIso: '2026-09-23T22:00:00+08:00' })), rules, [], [], { now: current, blockMinutes: 50, bufferRatio: 0, minBlockMinutes: 20, breakMinutes: 10 })
+  assert.equal(result.conflicts.length, 0)
+  assert.ok(new Set(result.items.map(item => localDateKey(new Date(item.startTime)))).size >= 3)
+  assert.ok(result.items.some(item => localDateKey(new Date(item.startTime)) === '2026-09-19'))
+})
+
+test('smart mode prioritizes an urgent deadline before ordinary work', () => {
+  const current = new Date('2026-09-19T14:00:00+08:00')
+  const rules = [
+    { id: 'sat', weekday: 6, startTime: '14:00', endTime: '22:00' },
+    { id: 'sun', weekday: 0, startTime: '09:00', endTime: '22:00' },
+  ]
+  const urgent = { ...task('urgent', 180, '2026-09-20T12:00:00+08:00'), completionMode: 'smart' as const, priority: 90 }
+  const result = buildSchedule([urgent, { ...task('later', 60, '2026-09-23T22:00:00+08:00'), completionMode: 'smart' as const }], rules, [], [], { now: current, blockMinutes: 50, bufferRatio: 0, minBlockMinutes: 20 })
+  const urgentItems = result.items.filter(item => item.taskId === 'urgent')
+  assert.equal(urgentItems.reduce((sum, item) => sum + (Date.parse(item.endTime) - Date.parse(item.startTime)) / 60000, 0), 180)
+  assert.ok(urgentItems.every(item => Date.parse(item.endTime) <= Date.parse(urgent.deadlineIso!)))
+})
+
+test('single_day stays on one local date without requiring one continuous block', () => {
+  const current = new Date('2026-09-19T14:00:00+08:00')
+  const rules = [{ id: 'sat', weekday: 6, startTime: '14:00', endTime: '18:00' }]
+  const result = buildSchedule([{ ...task('single', 120), completionMode: 'single_day' as const }], rules, [], [], { now: current, blockMinutes: 50, bufferRatio: 0, minBlockMinutes: 20, breakMinutes: 10 })
+  assert.equal(result.conflicts.length, 0)
+  assert.equal(new Set(result.items.map(item => localDateKey(new Date(item.startTime)))).size, 1)
+  assert.equal(result.items.reduce((sum, item) => sum + (Date.parse(item.endTime) - Date.parse(item.startTime)) / 60000, 0), 120)
+})
+
+test('spread_days respects the selected number of dates and minimum block size', () => {
+  const current = new Date('2026-09-19T14:00:00+08:00')
+  const rules = [
+    { id: 'sat', weekday: 6, startTime: '14:00', endTime: '18:00' },
+    { id: 'sun', weekday: 0, startTime: '09:00', endTime: '13:00' },
+  ]
+  const result = buildSchedule([{ ...task('spread', 120), completionMode: 'spread_days' as const, spreadDays: 2 }], rules, [], [], { now: current, blockMinutes: 50, bufferRatio: 0, minBlockMinutes: 20 })
+  assert.equal(result.conflicts.length, 0)
+  assert.equal(new Set(result.items.map(item => localDateKey(new Date(item.startTime)))).size, 2)
+  assert.ok(result.items.every(item => (Date.parse(item.endTime) - Date.parse(item.startTime)) / 60000 >= 20))
+})
+
+test('weekly fixed events are expanded across the planning horizon', () => {
+  const current = new Date('2026-09-19T14:00:00+08:00')
+  const rules = [{ id: 'mon', weekday: 1, startTime: '09:00', endTime: '12:00' }]
+  const fixed: FixedEvent = { id: 'weekly', title: '固定课', startTime: '2026-09-14T09:00:00+08:00', endTime: '2026-09-14T10:00:00+08:00', recurrenceRule: 'weekly' }
+  const result = buildSchedule([{ ...task('future', 120, '2026-09-29T12:00:00+08:00'), completionMode: 'smart' as const }], rules, [fixed], [], { now: current, horizonDays: 21, blockMinutes: 50, bufferRatio: 0 })
+  assert.equal(result.conflicts.length, 0)
+  assert.ok(result.items.every(item => {
+    const start = new Date(item.startTime)
+    return start.getDay() !== 1 || start.getHours() >= 10
+  }))
 })

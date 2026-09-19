@@ -2,7 +2,7 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 import { z } from 'zod'
 
 export type TaskStatus = 'todo' | 'done'
-export type TaskCompletionMode = 'single_day' | 'spread_days'
+export type TaskCompletionMode = 'smart' | 'single_day' | 'spread_days'
 export type Task = {
   id: string
   title: string
@@ -82,7 +82,7 @@ const taskInputSchema = z.object({
 })
 
 const taskCompletionSchema = z.object({
-  completionMode: z.enum(['single_day', 'spread_days']).optional(),
+  completionMode: z.enum(['smart', 'single_day', 'spread_days']).optional(),
   spreadDays: z.number().int().min(2).max(7).optional(),
   requireContinuous: z.boolean().optional(),
   completedMinutes: z.number().int().min(0).optional(),
@@ -140,7 +140,7 @@ function localTasks(): Task[] {
   try {
     const raw = localStorage.getItem('study-tasks')
     const parsed = raw ? (JSON.parse(raw) as Task[]) : demoTasks
-    return parsed.map(task => ({ ...task, id: String(task.id), courseId: task.courseId ? String(task.courseId) : undefined }))
+    return parsed.map(task => ({ ...task, id: String(task.id), courseId: task.courseId ? String(task.courseId) : undefined, completionMode: task.completionMode ?? 'smart' }))
   } catch { return demoTasks }
 }
 
@@ -277,7 +277,7 @@ function mapTask(row: Record<string, unknown>, courses: Course[], schedule: Sche
   const course = courses.find(c => c.id === row.course_id) ?? courses.find(c => c.name === row.course) ?? { id: '', name: '未分类', color: '#8793a1' }
   const scheduleItem = schedule.find(item => item.taskId === row.id)
   const completion = taskCompletionSchema.safeParse(row.evidence)
-  const completionMode = completion.success ? completion.data.completionMode : undefined
+  const completionMode = completion.success ? completion.data.completionMode ?? 'smart' : 'smart'
   const spreadDays = completion.success && completionMode === 'spread_days' ? completion.data.spreadDays ?? 2 : undefined
   const requireContinuous = completion.success ? completion.data.requireContinuous : undefined
   const completedMinutes = completion.success ? completion.data.completedMinutes ?? 0 : 0
@@ -338,7 +338,7 @@ export async function loadWorkspace(): Promise<WorkspaceData> {
 export async function createTask(input: { title: string; minutes: number; course: string; deadlineIso?: string | null; difficulty?: number; priority?: number; type?: string; source?: 'manual' | 'weekly_input' | 'material' | 'temporary'; completionMode?: TaskCompletionMode; spreadDays?: number; requireContinuous?: boolean }): Promise<Task> {
   const parsed = taskInputSchema.parse(input)
   const completion = taskCompletionSchema.parse(input)
-  const completionMode = completion.completionMode ?? 'single_day'
+  const completionMode = completion.completionMode ?? 'smart'
   const spreadDays = completionMode === 'spread_days' ? completion.spreadDays ?? 2 : undefined
   const localCourse = localCourses().find(course => course.name === parsed.course)
   const requireContinuous = completion.requireContinuous ?? false
@@ -361,7 +361,7 @@ export async function updateTaskStatus(id: string, status: TaskStatus): Promise<
 export async function updateTask(id: string, input: { title: string; minutes: number; course: string; deadlineIso?: string | null; difficulty?: number; priority?: number; type?: string; completionMode?: TaskCompletionMode; spreadDays?: number; requireContinuous?: boolean; completedMinutes?: number }): Promise<void> {
   const parsed = taskInputSchema.parse(input)
   const completion = taskCompletionSchema.parse(input)
-  const completionMode = completion.completionMode ?? 'single_day'
+  const completionMode = completion.completionMode ?? 'smart'
   const spreadDays = completionMode === 'spread_days' ? completion.spreadDays ?? 2 : undefined
   if (!supabase || id.startsWith('local-') || !(await currentUserId(supabase))) return
   const courseResult = await supabase.from('courses').select('id').eq('name', parsed.course).maybeSingle()

@@ -58,6 +58,7 @@ import {
 import { ShanHaiBackground, type ShanHaiState } from './components/ShanHaiBackground'
 import { StudyHeatmap } from './components/StudyHeatmap'
 import { buildSchedule, type ReplanStrategy } from './lib/scheduler'
+import { localDateKey, minutesBetween } from './lib/date-utils'
 import { extractMaterialText } from './lib/extract'
 import { greetingFor, quoteFor } from './lib/daily-inspiration'
 import './styles.css'
@@ -90,6 +91,7 @@ const navItems = [
 type ScheduleCourseDraft = { weekday: number; title: string; start_time: string; end_time: string }
 type ScheduleAvailabilityDraft = { weekday: number; start_time: string; end_time: string }
 type ScheduleImportResult = { courses: ScheduleCourseDraft[]; availability: ScheduleAvailabilityDraft[]; notes: string }
+type TodayTask = Task & { todayPlannedMinutes: number; scheduledDate?: string }
 
 async function compressImageForVision(file: File): Promise<string> {
   const image = await new Promise<HTMLImageElement>((resolve, reject) => { const url = URL.createObjectURL(file); const element = new Image(); element.onload = () => { URL.revokeObjectURL(url); resolve(element) }; element.onerror = () => { URL.revokeObjectURL(url); reject(new Error('无法读取课表图片')) }; element.src = url })
@@ -214,13 +216,19 @@ function App() {
   useEffect(() => { try { localStorage.setItem('study-sidebar-collapsed', String(sidebarCollapsed)) } catch { /* storage may be unavailable */ } }, [sidebarCollapsed])
   useEffect(() => { try { localStorage.setItem('study-visual-style', visualStyle) } catch { /* storage may be unavailable */ } }, [visualStyle])
 
-  const scheduledTasks = tasks.map(task => {
-    const item = scheduleItems.find(scheduleItem => scheduleItem.taskId === task.id)
-    return item ? { ...task, slot: new Date(item.startTime).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }), scheduledDate: new Date(item.startTime).toDateString() } : task
+  const todayKey = localDateKey(new Date())
+  const todayTaskMap = new Map<string, TodayTask>()
+  scheduleItems.filter(item => localDateKey(new Date(item.startTime)) === todayKey).forEach(item => {
+    const task = tasks.find(candidate => candidate.id === item.taskId)
+    if (!task) return
+    const current = todayTaskMap.get(task.id)
+    const planned = (current?.todayPlannedMinutes ?? 0) + minutesBetween(item.startTime, item.endTime)
+    const firstStart = current?.slot ?? new Date(item.startTime).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
+    todayTaskMap.set(task.id, { ...task, slot: firstStart, scheduledDate: todayKey, todayPlannedMinutes: planned })
   })
-  const todayTasks = scheduledTasks.filter(t => t.slot && (t as Task & { scheduledDate?: string }).scheduledDate === new Date().toDateString())
+  const todayTasks = [...todayTaskMap.values()].sort((a, b) => (a.slot ?? '').localeCompare(b.slot ?? ''))
   const completed = tasks.filter(t => t.status === 'done').length
-  const totalMinutes = todayTasks.reduce((sum, t) => sum + t.minutes, 0)
+  const totalMinutes = todayTasks.reduce((sum, t) => sum + t.todayPlannedMinutes, 0)
   const progress = tasks.length ? Math.round((completed / tasks.length) * 100) : 0
 
   async function toggleTask(id: string) {
@@ -233,7 +241,7 @@ function App() {
       setToast(error instanceof Error ? `保存失败：${error.message}` : '保存失败，请重试')
     }
   }
-  async function addTask(title: string, minutes: number, course: string, strategy: ReplanStrategy = 'minimal_change', deadlineIso?: string | null, difficulty?: number, type?: string, completionMode: TaskCompletionMode = 'single_day', spreadDays?: number, priority = 70, requireContinuous = false) {
+  async function addTask(title: string, minutes: number, course: string, strategy: ReplanStrategy = 'minimal_change', deadlineIso?: string | null, difficulty?: number, type?: string, completionMode: TaskCompletionMode = 'smart', spreadDays?: number, priority = 70, requireContinuous = false) {
     try {
       const created = await createTaskRecord({ title, minutes, course: course || '未分类', deadlineIso, difficulty, type, source: 'temporary', completionMode, spreadDays, priority, requireContinuous })
       const nextTasks = [...tasks, created]
@@ -247,7 +255,7 @@ function App() {
       }
     } catch (error) { setToast(error instanceof Error ? `保存失败：${error.message}` : '保存失败，请重试') }
   }
-  async function editTask(id: string, title: string, minutes: number, course: string, deadlineIso?: string | null, difficulty?: number, type?: string, completionMode: TaskCompletionMode = 'single_day', spreadDays?: number, priority = 70, requireContinuous = false) {
+  async function editTask(id: string, title: string, minutes: number, course: string, deadlineIso?: string | null, difficulty?: number, type?: string, completionMode: TaskCompletionMode = 'smart', spreadDays?: number, priority = 70, requireContinuous = false) {
     const previous = tasks
     setTasks(current => current.map(task => task.id === id ? { ...task, title, minutes, course: course || '未分类', deadlineIso: deadlineIso ?? undefined, deadline: deadlineIso ? new Date(deadlineIso).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '未设置', difficulty: difficulty ? difficulty >= 4 ? '较难' : difficulty >= 3 ? '中等' : '简单' : task.difficulty, type: type ?? task.type, completionMode, spreadDays: completionMode === 'spread_days' ? spreadDays : undefined, priority, requireContinuous } : task))
     try { await updateTaskRecord(id, { title, minutes, course: course || '未分类', deadlineIso, difficulty, type, completionMode, spreadDays, priority, requireContinuous, completedMinutes: previous.find(task => task.id === id)?.completedMinutes ?? 0 }); setEditingTask(null); setToast(dataSource === 'supabase' ? '任务已更新到云端' : '任务已更新') } catch (error) { setTasks(previous); setToast(error instanceof Error ? `保存失败：${error.message}` : '保存失败，请重试') }
@@ -419,7 +427,8 @@ function App() {
     setTimerTask(null)
     if (taskId) {
       const task = tasks.find(item => item.id === taskId)
-      void recordStudyLog(taskId, task?.minutes ?? actualMinutes, actualMinutes)
+      const plannedMinutes = todayTasks.find(item => item.id === taskId)?.todayPlannedMinutes ?? task?.minutes ?? actualMinutes
+      void recordStudyLog(taskId, plannedMinutes, actualMinutes)
     }
   }
   async function runReplan(strategy: ReplanStrategy = 'minimal_change', taskList = tasks, availabilityOverride = availability, fixedEventsOverride = fixedEvents) {
@@ -506,7 +515,7 @@ function App() {
   </div>
 }
 
-function TodayView({ profile, tasks, allTasks, availability, fixedEvents, progress, totalMinutes, toggleTask, startTimer, timerTask, timerLabel, stopTimer, onAdd, replanning, onReplan }: { profile: UserProfile; tasks: Task[]; allTasks: Task[]; availability: AvailabilityRule[]; fixedEvents: FixedEvent[]; progress: number; totalMinutes: number; toggleTask: (id:string)=>void; startTimer:(id:string)=>void; timerTask:string|null; timerLabel:string; stopTimer:()=>void; onAdd:()=>void; replanning:boolean; onReplan:()=>void }) {
+function TodayView({ profile, tasks, allTasks, availability, fixedEvents, progress, totalMinutes, toggleTask, startTimer, timerTask, timerLabel, stopTimer, onAdd, replanning, onReplan }: { profile: UserProfile; tasks: TodayTask[]; allTasks: Task[]; availability: AvailabilityRule[]; fixedEvents: FixedEvent[]; progress: number; totalMinutes: number; toggleTask: (id:string)=>void; startTimer:(id:string)=>void; timerTask:string|null; timerLabel:string; stopTimer:()=>void; onAdd:()=>void; replanning:boolean; onReplan:()=>void }) {
   const done = allTasks.filter(t => t.status === 'done').length
   const [now, setNow] = useState(() => new Date())
   useEffect(() => {
@@ -528,10 +537,13 @@ function TodayView({ profile, tasks, allTasks, availability, fixedEvents, progre
   const quote = quoteFor(now)
   const todayWeekday = now.getDay()
   const parseMinutes = (value: string) => { const [hour, minute] = value.split(':').map(Number); return (hour || 0) * 60 + (minute || 0) }
-  const availableMinutes = availability.filter(rule => rule.weekday === todayWeekday).reduce((sum, rule) => sum + Math.max(0, parseMinutes(rule.endTime) - parseMinutes(rule.startTime)), 0)
-  const fixedMinutes = fixedEvents.filter(event => new Date(event.startTime).toDateString() === now.toDateString()).reduce((sum, event) => sum + Math.max(0, (new Date(event.endTime).getTime() - new Date(event.startTime).getTime()) / 60000), 0)
+  const availableMinutes = schedulableWindows(availability).filter(rule => rule.weekday === todayWeekday).reduce((sum, rule) => sum + Math.max(0, parseMinutes(rule.endTime) - parseMinutes(rule.startTime)), 0)
+  const fixedMinutes = fixedEvents.filter(event => {
+    const start = new Date(event.startTime)
+    return start.toDateString() === now.toDateString() || event.recurrenceRule === 'weekly' && start.getDay() === todayWeekday
+  }).reduce((sum, event) => sum + Math.max(0, (new Date(event.endTime).getTime() - new Date(event.startTime).getTime()) / 60000), 0)
   const dailyCapacity = Math.max(0, availableMinutes - fixedMinutes)
-  const scheduledMinutes = tasks.reduce((sum, task) => sum + task.minutes, 0)
+  const scheduledMinutes = totalMinutes
   const dueTasks = allTasks.filter(task => task.status !== 'done' && task.deadlineIso).sort((a, b) => new Date(a.deadlineIso!).getTime() - new Date(b.deadlineIso!).getTime()).slice(0, 3)
   return <div className="page"><div className="page-head"><div className="daily-welcome"><div className="eyebrow">{now.toLocaleDateString('zh-CN', { weekday: 'long', month: 'long', day: 'numeric' })}</div><h1>{greetingFor(now)}，{profile.displayName} <span className="wave">✦</span></h1><p className="subhead daily-quote" lang="en"><q>{quote.text}</q> <span className="quote-author">— {quote.author}</span></p></div><div className="head-actions"><button className="button secondary" onClick={onReplan} disabled={replanning}><RefreshCw size={16} className={replanning ? 'spin' : ''} />{replanning ? '正在排程...' : '重新排程'}</button><button className="button primary" onClick={onAdd}><Plus size={17} />添加任务</button></div></div>
     <div className="stat-grid"><div className="stat-card accent"><div className="stat-top"><span>今日学习</span><Clock3 size={17} /></div><strong>{Math.floor(totalMinutes / 60)}<small>h</small> {totalMinutes % 60}<small>m</small></strong><div className="stat-meta"><span>计划总时长</span><span className="trend">{tasks.length ? `${tasks.length} 项` : '暂无任务'}</span></div></div><div className="stat-card"><div className="stat-top"><span>完成进度</span><span className="mini-ring">{progress}%</span></div><strong>{done}<small> / </small>{allTasks.length}<small> 项</small></strong><div className="progress-line"><i style={{ width: `${progress}%` }} /></div></div><div className="stat-card"><div className="stat-top"><span>今日不可用时间</span><Zap size={17} /></div><strong>{Math.floor(dailyCapacity / 60)}<small>h</small> {dailyCapacity % 60}<small>m</small></strong><div className="stat-meta"><span>已安排 {Math.round(scheduledMinutes / 60 * 10) / 10}h</span><span className="neutral">余 {Math.floor(Math.max(0, dailyCapacity - scheduledMinutes) / 60)}h {Math.max(0, dailyCapacity - scheduledMinutes) % 60}m</span></div></div><div className="stat-card"><div className="stat-top"><span>计划负荷</span><span className="load-dot" /></div><strong className="load-value">{dailyCapacity === 0 ? '未设置' : scheduledMinutes / dailyCapacity > .9 ? '偏高' : scheduledMinutes / dailyCapacity > .65 ? '适中' : '轻松'}</strong><div className="load-bar"><i style={{ width: `${Math.min(100, dailyCapacity ? scheduledMinutes / dailyCapacity * 100 : 0)}%` }} /></div><div className="stat-meta"><span>{dailyCapacity ? `${Math.round(scheduledMinutes / dailyCapacity * 100)}% 已安排` : '添加不可用时间后计算'}</span></div></div></div>
@@ -539,10 +551,10 @@ function TodayView({ profile, tasks, allTasks, availability, fixedEvents, progre
   </div>
 }
 
-function TaskRow({ task, toggleTask, startTimer, timerTask, timerLabel }: { task: Task; toggleTask:(id:string)=>void; startTimer:(id:string)=>void; timerTask:string|null; timerLabel:string }) {
+function TaskRow({ task, toggleTask, startTimer, timerTask, timerLabel }: { task: TodayTask; toggleTask:(id:string)=>void; startTimer:(id:string)=>void; timerTask:string|null; timerLabel:string }) {
   const completedMinutes = task.status === 'done' ? task.minutes : task.completedMinutes ?? 0
   const progress = Math.min(100, Math.round(completedMinutes / task.minutes * 100))
-  return <motion.div layout className={`task-row ${task.status === 'done' ? 'completed' : ''}`} initial={{ opacity: 0, y: 5 }} animate={{ opacity: task.status === 'done' ? .52 : 1, y: 0 }} transition={{ duration: .22 }} whileHover={{ x: 2 }}><button className={`check-box ${task.status === 'done' ? 'checked' : ''}`} onClick={() => toggleTask(task.id)}>{task.status === 'done' && <Check size={14} />}</button><span className="task-time">{task.slot}</span><span className="course-dot" style={{ background: task.color }} /><div className="task-main"><strong>{task.title}</strong><span>{task.course} <em>·</em> {task.type}{task.completionMode === 'spread_days' ? ` · 已完成 ${progress}%` : ''}</span></div><div className="task-details"><span className={`priority p${task.priority > 80 ? 'high' : task.priority > 65 ? 'mid' : 'low'}`}>{task.priority}</span><span className="duration"><Clock3 size={13} />{Math.max(0, task.minutes - completedMinutes)}m 剩余</span></div>{task.status === 'todo' && <button className="row-play" onClick={() => startTimer(task.id)}>{timerTask === task.id ? timerLabel : <Play size={14} fill="currentColor" />}</button>}</motion.div>
+  return <motion.div layout className={`task-row ${task.status === 'done' ? 'completed' : ''}`} initial={{ opacity: 0, y: 5 }} animate={{ opacity: task.status === 'done' ? .52 : 1, y: 0 }} transition={{ duration: .22 }} whileHover={{ x: 2 }}><button className={`check-box ${task.status === 'done' ? 'checked' : ''}`} onClick={() => toggleTask(task.id)}>{task.status === 'done' && <Check size={14} />}</button><span className="task-time">{task.slot}</span><span className="course-dot" style={{ background: task.color }} /><div className="task-main"><strong>{task.title}</strong><span>{task.course} <em>·</em> {task.type}{task.completionMode === 'smart' || task.completionMode === 'spread_days' ? ` · 总剩余 ${Math.max(0, task.minutes - completedMinutes)}m` : ''}</span></div><div className="task-details"><span className={`priority p${task.priority > 80 ? 'high' : task.priority > 65 ? 'mid' : 'low'}`}>{task.priority}</span><span className="duration"><Clock3 size={13} />{task.todayPlannedMinutes}m 今日</span></div>{task.status === 'todo' && <button className="row-play" onClick={() => startTimer(task.id)}>{timerTask === task.id ? timerLabel : <Play size={14} fill="currentColor" />}</button>}</motion.div>
 }
 
 function WeekView({ tasks, scheduleItems, fixedEvents, scheduleChanges, dataSource, onBack, replanning, onReplan }: { tasks:Task[]; scheduleItems: ScheduleItem[]; fixedEvents: FixedEvent[]; scheduleChanges: Array<{ type: string; taskId: string; from?: string; to?: string; reason?: string }>; dataSource: 'supabase' | 'local'; onBack:()=>void; replanning:boolean; onReplan:()=>void }) { const [weekOffset, setWeekOffset] = useState(0); const weekStart = mondayOf(new Date(), weekOffset); const blocks = useMemo(() => {
@@ -634,7 +646,7 @@ function AddTaskModal({ initial, courses, onClose, onAdd, onUpdate }: { initial?
   const [difficulty, setDifficulty] = useState(initial?.difficulty === '较难' ? 4 : initial?.difficulty === '简单' ? 2 : 3)
   const [type, setType] = useState(initial?.type ?? '学习')
   const [strategy, setStrategy] = useState<ReplanStrategy>('minimal_change')
-  const [completionMode, setCompletionMode] = useState<TaskCompletionMode>(initial?.completionMode ?? 'single_day')
+  const [completionMode, setCompletionMode] = useState<TaskCompletionMode>(initial?.completionMode ?? 'smart')
   const [spreadDays, setSpreadDays] = useState(initial?.spreadDays ?? 2)
   const [priority, setPriority] = useState(initial?.priority ?? 70)
   const [requireContinuous, setRequireContinuous] = useState(initial?.requireContinuous ?? false)
@@ -643,7 +655,7 @@ function AddTaskModal({ initial, courses, onClose, onAdd, onUpdate }: { initial?
   const save = () => editing
     ? onUpdate?.(initial!.id, title, minutes, savedCourse, deadline ? new Date(deadline).toISOString() : null, difficulty, type, completionMode, completionMode === 'spread_days' ? spreadDays : undefined, priority, requireContinuous)
     : onAdd?.(title, minutes, savedCourse, strategy, deadline ? new Date(deadline).toISOString() : null, difficulty, type, completionMode, completionMode === 'spread_days' ? spreadDays : undefined, priority, requireContinuous)
-  return <div className="modal-backdrop" onMouseDown={event => event.target === event.currentTarget && onClose()}><div className="modal"><div className="modal-head"><div><span className="eyebrow">{editing ? '编辑任务' : '快速添加'}</span><h2>{editing ? '修改任务' : '新建临时任务'}</h2></div><button className="icon-btn" onClick={onClose}><X size={18} /></button></div><label>任务名称<input autoFocus placeholder="例如：整理课堂笔记" value={title} onChange={event => setTitle(event.target.value)} /></label><div className="form-grid"><label>课程<span className="field-optional">可选</span><select className={!course ? 'is-placeholder' : ''} value={course} onChange={event => setCourse(event.target.value)}><option value="">暂不选择课程</option>{courses.map(item => <option key={item.id} value={item.name}>{item.name}</option>)}</select></label><label>预计时长<select value={minutes} onChange={event => setMinutes(Number(event.target.value))}><option value="25">25 分钟</option><option value="30">30 分钟</option><option value="50">50 分钟</option><option value="90">90 分钟</option></select></label><label>截止时间<input type="datetime-local" value={deadline} onChange={event => setDeadline(event.target.value)} /></label><label>难度<select value={difficulty} onChange={event => setDifficulty(Number(event.target.value))}><option value="1">简单</option><option value="3">中等</option><option value="4">较难</option></select></label></div><label>任务类型<input value={type} onChange={event => setType(event.target.value)} placeholder="例如：作业、复习、背诵" /></label><label>优先级 <span>{priority}</span><input type="range" min="1" max="100" value={priority} onChange={event => setPriority(Number(event.target.value))} /></label><fieldset className="completion-mode"><legend>完成方式</legend><div className="segmented"><button type="button" className={completionMode === 'single_day' ? 'selected' : ''} onClick={() => setCompletionMode('single_day')}>一次性完成</button><button type="button" className={completionMode === 'spread_days' ? 'selected' : ''} onClick={() => setCompletionMode('spread_days')}>分摊到多日</button></div>{completionMode === 'single_day' && <label className="switch-label">必须连续完成 <button type="button" className={`switch ${requireContinuous ? 'on' : ''}`} onClick={() => setRequireContinuous(value => !value)}><i /></button><span>若没有足够连续空档，系统会提示冲突。</span></label>}{completionMode === 'spread_days' && <label className="spread-days">分几天完成<select value={spreadDays} onChange={event => setSpreadDays(Number(event.target.value))}>{[2, 3, 4, 5, 6, 7].map(days => <option value={days} key={days}>{days} 天</option>)}</select><span>自动排程会按每天的实际空闲容量分配到不同日期。</span></label>}</fieldset>{!editing && <label>加入计划方式<select value={strategy} onChange={event => setStrategy(event.target.value as ReplanStrategy)}><option value="preserve">保持原计划</option><option value="minimal_change">尽量少改动</option><option value="urgent">紧急插入</option></select></label>}<div className="modal-footer"><button className="button secondary" onClick={onClose}>取消</button><button className="button primary" disabled={!title.trim()} onClick={save}>{editing ? <Check size={16} /> : <Plus size={16} />}{editing ? '保存修改' : '加入今日计划'}</button></div></div></div>
+  return <div className="modal-backdrop" onMouseDown={event => event.target === event.currentTarget && onClose()}><div className="modal"><div className="modal-head"><div><span className="eyebrow">{editing ? '编辑任务' : '快速添加'}</span><h2>{editing ? '修改任务' : '新建临时任务'}</h2></div><button className="icon-btn" onClick={onClose}><X size={18} /></button></div><label>任务名称<input autoFocus placeholder="例如：整理课堂笔记" value={title} onChange={event => setTitle(event.target.value)} /></label><div className="form-grid"><label>课程<span className="field-optional">可选</span><select className={!course ? 'is-placeholder' : ''} value={course} onChange={event => setCourse(event.target.value)}><option value="">暂不选择课程</option>{courses.map(item => <option key={item.id} value={item.name}>{item.name}</option>)}</select></label><label>预计时长<select value={minutes} onChange={event => setMinutes(Number(event.target.value))}><option value="25">25 分钟</option><option value="30">30 分钟</option><option value="50">50 分钟</option><option value="90">90 分钟</option></select></label><label>截止时间<input type="datetime-local" value={deadline} onChange={event => setDeadline(event.target.value)} /></label><label>难度<select value={difficulty} onChange={event => setDifficulty(Number(event.target.value))}><option value="1">简单</option><option value="3">中等</option><option value="4">较难</option></select></label></div><label>任务类型<input value={type} onChange={event => setType(event.target.value)} placeholder="例如：作业、复习、背诵" /></label><label>优先级 <span>{priority}</span><input type="range" min="1" max="100" value={priority} onChange={event => setPriority(Number(event.target.value))} /></label><fieldset className="completion-mode"><legend>完成方式</legend><div className="segmented"><button type="button" className={completionMode === 'smart' ? 'selected' : ''} onClick={() => setCompletionMode('smart')}>智能安排</button><button type="button" className={completionMode === 'single_day' ? 'selected' : ''} onClick={() => setCompletionMode('single_day')}>一次性完成</button><button type="button" className={completionMode === 'spread_days' ? 'selected' : ''} onClick={() => setCompletionMode('spread_days')}>分摊到多日</button></div>{completionMode === 'smart' && <span className="panel-caption">系统会根据截止时间、每日负载、优先级和高效学习时段自动安排。</span>}{completionMode === 'single_day' && <label className="switch-label">必须连续完成 <button type="button" className={`switch ${requireContinuous ? 'on' : ''}`} onClick={() => setRequireContinuous(value => !value)}><i /></button><span>若没有足够连续空档，系统会提示冲突。</span></label>}{completionMode === 'spread_days' && <label className="spread-days">分几天完成<select value={spreadDays} onChange={event => setSpreadDays(Number(event.target.value))}>{[2, 3, 4, 5, 6, 7].map(days => <option value={days} key={days}>{days} 天</option>)}</select><span>自动排程会按每天的实际空闲容量分配到不同日期。</span></label>}</fieldset>{!editing && <label>加入计划方式<select value={strategy} onChange={event => setStrategy(event.target.value as ReplanStrategy)}><option value="preserve">保持原计划</option><option value="minimal_change">尽量少改动</option><option value="urgent">紧急插入</option></select></label>}<div className="modal-footer"><button className="button secondary" onClick={onClose}>取消</button><button className="button primary" disabled={!title.trim()} onClick={save}>{editing ? <Check size={16} /> : <Plus size={16} />}{editing ? '保存修改' : '加入计划'}</button></div></div></div>
 }
 
 function ProfileModal({ profile, onClose, onSave }: { profile: UserProfile; onClose: () => void; onSave: (input: UserProfile) => Promise<void> }) {
