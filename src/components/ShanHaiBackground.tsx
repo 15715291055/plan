@@ -2,7 +2,7 @@ import { motion, useReducedMotion } from 'motion/react'
 
 export type ShanHaiState = 'today' | 'week' | 'tasks' | 'courses' | 'materials' | 'review' | 'settings'
 
-type ShanHaiBackgroundProps = { state: ShanHaiState; emphasis?: 'none' | 'warm'; visualStyle?: 'style-1' | 'style-2' | 'style-3' | 'style-4' }
+type ShanHaiBackgroundProps = { state: ShanHaiState; emphasis?: 'none' | 'warm'; visualStyle?: 'style-1' | 'style-2' | 'style-3' }
 
 const palette: Record<ShanHaiState, { wash: string; ridge: string; ridgeAlt: string; glow: string }> = {
   today: { wash: '#eaf4fb', ridge: '#9ec4d2', ridgeAlt: '#c1d7d9', glow: '#a5d7dc' },
@@ -20,9 +20,10 @@ export function ShanHaiBackground({ state, emphasis = 'none', visualStyle = 'sty
   const warm = emphasis === 'warm'
 
   return <div className={`shan-hai-background state-${state} ${visualStyle} ${warm ? 'emphasis-warm' : ''}`} aria-hidden="true" style={{ '--shan-wash': colors.wash, '--shan-ridge': colors.ridge, '--shan-ridge-alt': colors.ridgeAlt, '--shan-glow': colors.glow } as React.CSSProperties}>
-    {visualStyle === 'style-2' && <><img className="style-two-image" src="/style-2-background.png" alt="" /><div className="style-two-overlay" /></>}
-    {visualStyle === 'style-3' && <><img className="style-background-image" src="/style-3-background.jpg" alt="" /><div className="style-background-overlay" /></>}
-    {visualStyle === 'style-4' && <><img className="style-background-image" src="/style-4-background.jpg" alt="" /><div className="style-background-overlay style-four-overlay" /></>}
+    {visualStyle === 'style-1' && <><img className="style-two-image" src="/style-2-background.png" alt="" /><div className="style-two-overlay" /></>}
+    {visualStyle === 'style-1' && <div className={`style-two-snow ${reducedMotion ? 'static' : ''}`}>{Array.from({ length: 34 }, (_, index) => <span key={index} style={{ '--snow-left': `${(index * 37) % 103 - 2}%`, '--snow-size': `${2 + (index % 3)}px`, '--snow-duration': `${14 + (index % 7)}s`, '--snow-delay': `${-(index % 13)}s`, '--snow-drift': `${-28 + (index % 9) * 7}px`, '--snow-top': `${(index * 23) % 100}%` } as React.CSSProperties} />)}</div>}
+    {visualStyle === 'style-2' && <><img className="style-background-image" src="/style-3-background.jpg" alt="" /><div className="style-background-overlay" /></>}
+    {visualStyle === 'style-3' && <><img className="style-background-image" src="/style-4-background.jpg" alt="" /><div className="style-background-overlay style-four-overlay" /></>}
     <div className="shan-hai-wash" />
     <motion.div className="shan-hai-cloud cloud-a" animate={reducedMotion ? undefined : { x: [0, 22, -12, 0], y: [0, -8, 7, 0], opacity: [0.25, 0.38, 0.28, 0.25] }} transition={{ duration: 34, repeat: Infinity, ease: 'easeInOut' }} />
     <motion.div className="shan-hai-cloud cloud-b" animate={reducedMotion ? undefined : { x: [0, -26, 12, 0], y: [0, 10, -5, 0], opacity: [0.18, 0.29, 0.2, 0.18] }} transition={{ duration: 42, repeat: Infinity, ease: 'easeInOut', delay: 2 }} />
