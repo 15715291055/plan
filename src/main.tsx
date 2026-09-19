@@ -52,6 +52,7 @@ import {
   saveDeepSeekKey,
   deleteDeepSeekKey,
   apiRequestHeaders,
+  readApiPayload,
   defaultUserProfile,
   type UserProfile,
   type CapacityProfile,
@@ -213,7 +214,7 @@ function App() {
       setProfile(workspace.profile)
       try {
         const response = await fetch('/api/deepseek-key', { headers: await apiRequestHeaders() })
-        const result = await response.json() as { configured?: boolean }
+        const result = await readApiPayload<{ configured?: boolean; error?: string }>(response)
         setHasSavedDeepSeekKey(Boolean(response.ok && result.configured))
       } catch { setHasSavedDeepSeekKey(false) }
       setDataSource(workspace.source)
@@ -367,7 +368,7 @@ function App() {
         return true
       }
       const response = await fetch('/api/deepseek-key', { headers: await apiRequestHeaders() })
-      const result = await response.json() as { configured?: boolean; error?: string }
+      const result = await readApiPayload<{ configured?: boolean; error?: string }>(response)
       const configured = response.ok && Boolean(result.configured)
       setHasSavedDeepSeekKey(configured)
       if (configured) return true
@@ -383,7 +384,7 @@ function App() {
     try {
       const image = await compressImageForVision(file)
       const response = await fetch('/api/analyze-schedule-image', { method: 'POST', headers: await apiRequestHeaders(), body: JSON.stringify({ image }) })
-      const payload = await response.json() as ScheduleImportResult & { error?: string }
+      const payload = await readApiPayload<ScheduleImportResult & { error?: string }>(response)
       if (!response.ok) { if (response.status === 401) setHasSavedDeepSeekKey(false); throw new Error(payload.error ?? '登录状态已失效，请重新登录后再试') }
       setScheduleImport({ courses: payload.courses ?? [], availability: payload.availability ?? [], notes: payload.notes ?? '' })
       setToast('课表已识别，请确认后写入计划')
@@ -393,7 +394,7 @@ function App() {
     if (!(await ensureDeepSeekKey())) return
     try {
       const response = await fetch('/api/analyze-schedule-text', { method: 'POST', headers: await apiRequestHeaders(), body: JSON.stringify({ content }) })
-      const payload = await response.json() as ScheduleImportResult & { error?: string }
+      const payload = await readApiPayload<ScheduleImportResult & { error?: string }>(response)
       if (!response.ok) { if (response.status === 401) setHasSavedDeepSeekKey(false); throw new Error(payload.error ?? '登录状态已失效，请重新登录后再试') }
       setScheduleImport({ courses: payload.courses ?? [], availability: payload.availability ?? [], notes: payload.notes ?? '' }); setToast('课表文字已解析，请确认后写入计划')
     } catch (error) { setToast(error instanceof Error ? error.message : '课表文字解析失败') }
@@ -428,7 +429,7 @@ function App() {
         const text = await extractMaterialText(file)
         if (text.length >= 20) {
           const response = await fetch('/api/analyze-material', { method: 'POST', headers: await apiRequestHeaders(), body: JSON.stringify({ fileName: file.name, content: text }) })
-          const payload = await response.json() as { error?: string; tasks?: Array<{ title: string; estimated_minutes: number; difficulty: number; task_type: string }>; chapters?: string[]; knowledge_points?: string[]; summary?: string }
+          const payload = await readApiPayload<{ error?: string; tasks?: Array<{ title: string; estimated_minutes: number; difficulty: number; task_type: string }>; chapters?: string[]; knowledge_points?: string[]; summary?: string }>(response)
           if (!response.ok) { if (response.status === 401) setHasSavedDeepSeekKey(false); throw new Error(payload.error ?? '登录状态已失效，请重新登录后再试') }
           const analysis = { chapters: payload.chapters ?? [], knowledge_points: payload.knowledge_points ?? [], tasks: payload.tasks ?? [], summary: payload.summary ?? '' }
           await updateMaterialAnalysis(created.id, 'needs_review', analysis)
@@ -495,7 +496,7 @@ function App() {
     setAiBusy(true)
     try {
       const response = await fetch('/api/analyze-weekly-content', { method: 'POST', headers: await apiRequestHeaders(), body: JSON.stringify({ content, courses: courses.map(course => course.name) }) })
-      const payload = await response.json() as { error?: string; tasks?: TaskDraft[] }
+      const payload = await readApiPayload<{ error?: string; tasks?: TaskDraft[] }>(response)
       if (!response.ok || !payload.tasks) { if (response.status === 401) setHasSavedDeepSeekKey(false); throw new Error(payload.error ?? '登录状态已失效，请重新登录后再试') }
       await saveWeeklyInput({ weekStart: localDateKey(new Date()), rawText: content })
       setAiDrafts(payload.tasks); setToast(`AI 已生成 ${payload.tasks.length} 个任务草稿，请确认`)

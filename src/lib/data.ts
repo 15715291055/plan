@@ -3,6 +3,16 @@ import { z } from 'zod'
 
 export type TaskStatus = 'todo' | 'done'
 export type TaskCompletionMode = 'smart' | 'single_day' | 'spread_days'
+
+export async function readApiPayload<T>(response: Response): Promise<T> {
+  const body = await response.text()
+  if (!body.trim()) return {} as T
+  try { return JSON.parse(body) as T } catch {
+    const detail = body.replace(/\s+/g, ' ').trim().slice(0, 180)
+    throw new Error(response.ok ? '服务器返回了无效响应' : `服务器错误（HTTP ${response.status}）：${detail || '未返回错误信息'}`)
+  }
+}
+
 export type Task = {
   id: string
   title: string
@@ -251,13 +261,13 @@ export async function apiRequestHeaders(): Promise<HeadersInit> {
 
 export async function saveDeepSeekKey(value: string): Promise<void> {
   const response = await fetch('/api/deepseek-key', { method: 'POST', headers: await apiRequestHeaders(), body: JSON.stringify({ apiKey: value }) })
-  const payload = await response.json() as { error?: string }
+  const payload = await readApiPayload<{ error?: string }>(response)
   if (!response.ok) throw new Error(payload.error ?? 'API Key 保存失败')
 }
 
 export async function deleteDeepSeekKey(): Promise<void> {
   const response = await fetch('/api/deepseek-key', { method: 'DELETE', headers: await apiRequestHeaders() })
-  const payload = await response.json() as { error?: string }
+  const payload = await readApiPayload<{ error?: string }>(response)
   if (!response.ok) throw new Error(payload.error ?? 'API Key 删除失败')
 }
 

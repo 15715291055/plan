@@ -1,6 +1,8 @@
 import { createCipheriv, randomBytes } from 'node:crypto'
 import { currentUser } from './_deepseek'
 
+export const runtime = 'nodejs'
+
 function encryptionKey() {
   const value = process.env.DEEPSEEK_KEY_ENCRYPTION_KEY ?? ''
   if (!/^[a-f0-9]{64}$/i.test(value)) throw new Error('服务端尚未配置 API Key 加密密钥')

@@ -1,12 +1,15 @@
 import { z } from 'zod'
 import { resolveDeepSeekKey } from './_deepseek'
 
+export const runtime = 'nodejs'
+
 const requestSchema = z.object({ fileName: z.string().min(1).max(300), content: z.string().trim().min(20).max(120000) })
 const responseSchema = z.object({ chapters: z.array(z.string()).max(100), knowledge_points: z.array(z.string()).max(200), tasks: z.array(z.object({ title: z.string(), estimated_minutes: z.number().int().min(5).max(1440), difficulty: z.number().int().min(1).max(5), task_type: z.string() })).max(30), summary: z.string().max(3000) })
 
 export default async function handler(req: any, res: any) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' })
-  const apiKey = await resolveDeepSeekKey(req)
+  let apiKey: string | null
+  try { apiKey = await resolveDeepSeekKey(req) } catch (error) { return res.status(503).json({ error: error instanceof Error ? error.message : '服务端配置不可用' }) }
   if (!apiKey) return res.status(401).json({ error: '请先登录并在设置中保存 DeepSeek API Key' })
   const parsed = requestSchema.safeParse(req.body)
   if (!parsed.success) return res.status(400).json({ error: '资料文本不足，暂时无法分析' })
