@@ -1,5 +1,25 @@
 # 拾序 · 智能学习计划项目交接文档
 
+## 最新进展（2026-09-20 22:22，优先于下方历史记录）
+
+- 已读取 Vercel 生产运行日志，确认此前 500 的实际原因：
+  `ERR_MODULE_NOT_FOUND: Cannot find module '/var/task/api/_deepseek' imported from /var/task/api/deepseek-key.js`。
+- `077a1c4 fix: resolve API helper imports in Node ESM runtime` 已推送 main。
+  五个 API 的相对导入已从 `./_deepseek` 改成 `./_deepseek.js`，符合部署后 Node ESM 的解析要求。
+- 增加 `tsconfig.api.json`、Node 类型依赖及 `scripts/api-runtime.test.ts`。
+  build/typecheck 现在检查后端；测试用原生 Node 加载编译后的全部 API，避免 tsx 掩盖扩展名问题。
+  lint、build、27 项测试通过。
+- 已验证生产部署 `dpl_E1n3zpH4xAs2VA1iBdMQXT4uvdSQ` 为 Ready，
+  URL 为 `https://plan-2jeyb1shv-ray-01cd.vercel.app`，绑定稳定域名。
+- 稳定域名上的五个 API 均已实际返回 `401 application/json`（未携带用户登录令牌）。
+  `FUNCTION_INVOCATION_FAILED` 启动问题已解决。
+- 尚未用用户真实登录会话完成 Key 保存、数据库读取和 DeepSeek 课表解析。
+  下一步让用户刷新后保存 Key 并重试；如失败，读取最新运行日志或具体 JSON 错误。
+  401 冒烟测试不能证明完整 AI 工作流成功。
+- 下方第 3、5、10 节为修复前的历史状态，不应再据此重复配置变量或诊断同一个启动错误。
+- 环境变量是否存在与是否正确是两件事；此前凭本地 .env 断言生产变量缺失/唯一根因的说法不可靠。
+- 不要再次生成或替换现有加密密钥，否则已保存密文可能无法解密。
+
 > 更新日期：2026-09-20（Asia/Shanghai）
 > 项目目录：`C:\Users\31454\Documents\ChatGPT\学习计划网页`
 > GitHub：<https://github.com/15715291055/plan>
