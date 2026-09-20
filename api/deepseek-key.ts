@@ -1,5 +1,5 @@
 import { createCipheriv, randomBytes } from 'node:crypto'
-import { currentUser } from './_deepseek'
+import { currentUser } from './_deepseek.js'
 
 export const runtime = 'nodejs'
 

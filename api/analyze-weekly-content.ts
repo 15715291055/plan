@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { resolveDeepSeekKey } from './_deepseek'
+import { resolveDeepSeekKey } from './_deepseek.js'
 
 export const runtime = 'nodejs'
 
