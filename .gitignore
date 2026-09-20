@@ -6,3 +6,6 @@ dist/
 *.tsbuildinfo
 .playwright-cli/
 output/playwright/
+
+.vercel
+.env*
