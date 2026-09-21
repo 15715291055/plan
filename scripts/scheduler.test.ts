@@ -179,6 +179,34 @@ test('respects an independent daily capacity limit across days', () => {
   assert.ok([...byDay.values()].every(minutes => minutes <= 120))
 })
 
+test('keeps automatic blocks inside the default daytime window when no availability rules exist', () => {
+  const current = new Date('2026-09-19T09:00:00+08:00')
+  const result = buildSchedule([task('daytime-task', 50)], [], [], [], {
+    now: current,
+    bufferRatio: 0,
+    preferences: { defaultBlockMinutes: 50, bufferRatio: 0, autoLog: true, breakMinutes: 10, minBlockMinutes: 20, peakStartHour: 9, peakEndHour: 12, baseDailyMinutes: 120, weeklyLoad: { 0: 100, 1: 100, 2: 100, 3: 100, 4: 100, 5: 100, 6: 100 } },
+  })
+  assert.equal(result.conflicts.length, 0)
+  assert.ok(result.items.length > 0)
+  assert.ok(result.items.every(item => {
+    const start = new Date(item.startTime)
+    const end = new Date(item.endTime)
+    return start.getHours() >= 8 && (end.getHours() < 23 || (end.getHours() === 23 && end.getMinutes() === 0))
+  }))
+})
+
+test('applies the default daytime window on weekdays without availability rules', () => {
+  const current = new Date('2026-09-19T09:00:00+08:00')
+  const result = buildSchedule([task('partial-rules-task', 50)], [{ id: 'monday-block', weekday: 1, startTime: '18:00', endTime: '22:00' }], [], [], {
+    now: current,
+    bufferRatio: 0,
+    horizonDays: 7,
+    preferences: { defaultBlockMinutes: 50, bufferRatio: 0, autoLog: true, breakMinutes: 10, minBlockMinutes: 20, peakStartHour: 9, peakEndHour: 12, baseDailyMinutes: 120, weeklyLoad: { 0: 100, 1: 100, 2: 100, 3: 100, 4: 100, 5: 100, 6: 100 } },
+  })
+  assert.equal(result.conflicts.length, 0)
+  assert.ok(result.items.every(item => new Date(item.startTime).getHours() >= 8))
+})
+
 test('skips a zero-capacity weekday while scheduling', () => {
   const current = new Date('2026-09-19T09:00:00+08:00')
   const result = buildSchedule([task('rest-day-task', 60, '2026-09-20T23:00:00+08:00')], [], [], [], {

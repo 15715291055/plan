@@ -15,6 +15,11 @@ type Candidate = { state: TaskState; start: Date; end: Date; duration: number; d
 
 const DAY_MS = 24 * 60 * 60_000
 const EPSILON = 0.0001
+// Automatic planning should avoid creating study blocks in the overnight hours
+// when the user has not configured any unavailable-time rules. Manual schedule
+// edits remain unrestricted and can still be saved at any time of day.
+const DEFAULT_AUTO_START_HOUR = 8
+const DEFAULT_AUTO_END_HOUR = 23
 const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max)
 
 function mondayOf(date: Date): Date {
@@ -109,7 +114,8 @@ function buildAvailabilityWindows(availability: AvailabilityRule[], monday: Date
   const windows: Interval[] = []
   for (let day = 0; day < horizonDays; day += 1) {
     const calendarDay = new Date(monday); calendarDay.setDate(monday.getDate() + day)
-    const dayStart = dateAtDay(calendarDay, '00:00'); const dayEnd = new Date(dayStart); dayEnd.setDate(dayEnd.getDate() + 1)
+    const dayStart = dateAtDay(calendarDay, `${String(DEFAULT_AUTO_START_HOUR).padStart(2, '0')}:00`)
+    const dayEnd = dateAtDay(calendarDay, `${String(DEFAULT_AUTO_END_HOUR).padStart(2, '0')}:00`)
     const blocked = availability.filter(item => item.weekday === calendarDay.getDay()).map(rule => ({ start: dateAtDay(calendarDay, rule.startTime), end: dateAtDay(calendarDay, rule.endTime) })).sort((a, b) => a.start.getTime() - b.start.getTime())
     let cursor = dayStart
     blocked.forEach(item => { if (item.start > cursor) windows.push({ start: cursor < now && localDateKey(cursor) === localDateKey(now) ? new Date(now) : cursor, end: item.start }); if (item.end > cursor) cursor = item.end })
