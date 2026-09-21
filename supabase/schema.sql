@@ -300,6 +300,7 @@ end; $$;
 revoke all on function public.complete_task_and_cleanup_schedule(uuid,timestamptz), public.restore_completed_task(uuid), public.adjust_schedule_item(uuid,timestamptz,timestamptz,boolean) from public;
 grant execute on function public.complete_task_and_cleanup_schedule(uuid,timestamptz), public.restore_completed_task(uuid), public.adjust_schedule_item(uuid,timestamptz,timestamptz,boolean) to authenticated;
 
+
 -- Handoff V3: capacity persistence, manual scheduling and completion cleanup.
 -- Safe to run on databases that have not applied the earlier daily-capacity migration.
 create extension if not exists pgcrypto;
@@ -329,6 +330,18 @@ create table if not exists public.daily_capacity_overrides (
   id uuid primary key default gen_random_uuid(), user_id uuid not null references auth.users(id) on delete cascade default auth.uid(),
   override_date date not null, load_percent smallint, capacity_minutes smallint, reason text, created_at timestamptz not null default now(), updated_at timestamptz not null default now(), unique(user_id, override_date)
 );
+alter table public.capacity_profiles enable row level security;
+alter table public.daily_capacity_overrides enable row level security;
+grant select, insert, update, delete on public.capacity_profiles to authenticated;
+grant select, insert, update, delete on public.daily_capacity_overrides to authenticated;
+do $$ begin
+  if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'capacity_profiles' and policyname = 'capacity_profiles_owner') then
+    create policy capacity_profiles_owner on public.capacity_profiles for all to authenticated using (user_id = auth.uid()) with check (user_id = auth.uid());
+  end if;
+  if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'daily_capacity_overrides' and policyname = 'daily_capacity_overrides_owner') then
+    create policy daily_capacity_overrides_owner on public.daily_capacity_overrides for all to authenticated using (user_id = auth.uid()) with check (user_id = auth.uid());
+  end if;
+end $$;
 alter table public.tasks add column if not exists completed_at timestamptz;
 alter table public.schedule_items add column if not exists source text not null default 'auto';
 alter table public.schedule_items add column if not exists manually_adjusted_at timestamptz;
