@@ -1,11 +1,13 @@
 import type { AvailabilityRule, CapacityProfile, DailyCapacityOverride, FixedEvent, ScheduleItem, Task, UserPreferences } from './data'
 import { localDateKey, minutesBetween } from './date-utils'
-import { getDailyCapacityBreakdown } from './daily-capacity'
+import { defaultPreferences as sharedDefaults } from './data'
+import { habitCandidateScore, type LearnedSchedulingPreferences } from './habits'
+import { getDailyCapacityBreakdown, scheduleMinutesOnDate, overlapsForDate } from './daily-capacity'
 
 export type ReplanStrategy = 'preserve' | 'minimal_change' | 'urgent'
 export type ScheduleChange = { type: 'added' | 'moved' | 'unchanged' | 'conflict'; taskId: string; from?: string; to?: string; reason?: string }
 export type SchedulerResult = { items: ScheduleItem[]; changes: ScheduleChange[]; conflicts: string[] }
-export type SchedulerOptions = { now?: Date; blockMinutes?: number; bufferRatio?: number; strategy?: ReplanStrategy; horizonDays?: number; minBlockMinutes?: number; breakMinutes?: number; peakStartHour?: number; peakEndHour?: number; preferences?: UserPreferences; capacityProfiles?: CapacityProfile[]; dailyCapacityOverrides?: DailyCapacityOverride[] }
+export type SchedulerOptions = { learnedPreferences?: LearnedSchedulingPreferences; now?: Date; blockMinutes?: number; bufferRatio?: number; strategy?: ReplanStrategy; horizonDays?: number; minBlockMinutes?: number; breakMinutes?: number; peakStartHour?: number; peakEndHour?: number; preferences?: UserPreferences; capacityProfiles?: CapacityProfile[]; dailyCapacityOverrides?: DailyCapacityOverride[] }
 
 type Interval = { start: Date; end: Date }
 type TaskState = { task: Task; remaining: number; initialRemaining: number; deadline: Date; explicitDeadline: boolean; selectedDay?: string; allocatedByDay: Map<string, number>; generated: ScheduleItem[] }
@@ -147,6 +149,7 @@ function roundUpToQuarterHour(date: Date): Date {
 function candidateStarts(interval: Interval, duration: number, deadline: Date, peakStartHour: number, existing: ScheduleItem[]): Date[] {
   const endLimit = deadline < interval.end ? deadline : interval.end; const peak = new Date(interval.start); peak.setHours(peakStartHour, 0, 0, 0)
   const starts = [new Date(interval.start), roundUpToQuarterHour(interval.start), peak]
+  for (let value = roundUpToQuarterHour(interval.start); value < endLimit; value = new Date(value.getTime() + 30 * 60000)) starts.push(value)
   existing.forEach(item => { const value = new Date(item.startTime); if (localDateKey(value) === localDateKey(interval.start)) starts.push(value) })
   const seen = new Set<number>()
   return starts.filter(start => start >= interval.start && new Date(start.getTime() + duration * 60_000) <= endLimit).sort((a, b) => a.getTime() - b.getTime()).filter(start => !seen.has(start.getTime()) && (seen.add(start.getTime()), true))
@@ -226,10 +229,10 @@ export function buildSchedule(tasks: Task[], availability: AvailabilityRule[], f
   const strategy = options?.strategy ?? 'minimal_change'; const horizonDays = Math.min(Math.max(options?.horizonDays ?? 28, 7), 56)
   const minBlockMinutes = Math.min(Math.max(options?.minBlockMinutes ?? 20, 5), blockMinutes); const breakMinutes = Math.min(Math.max(options?.breakMinutes ?? 0, 0), 30)
   const peakStartHour = clamp(options?.peakStartHour ?? 9, 0, 23); const peakEndHour = clamp(options?.peakEndHour ?? 12, peakStartHour + 1, 24); const monday = mondayOf(now); const horizonEnd = new Date(monday.getTime() + horizonDays * DAY_MS)
-  const taskById = new Map(tasks.map(task => [task.id, task])); const alwaysRetained = existingItems.filter(item => item.locked || taskById.get(item.taskId)?.status === 'done'); const retained = strategy === 'preserve' ? existingItems : alwaysRetained
+  const taskById = new Map(tasks.map(task => [task.id, task])); const alwaysRetained = existingItems.filter(item => item.locked || item.source === 'manual' || item.source === 'imported' || item.status === 'completed' || new Date(item.startTime) < now || taskById.get(item.taskId)?.status === 'done'); const retained = strategy === 'preserve' ? existingItems : alwaysRetained
   const retainedIds = new Set(retained.map(item => item.id)); const windows = buildAvailabilityWindows(availability, monday, now, horizonDays)
   const capacityIntervals = subtractIntervals(windows, expandFixedEvents(fixedEvents, monday, horizonDays))
-  const defaultPreferences: UserPreferences = options?.preferences ?? { defaultBlockMinutes: (blockMinutes === 25 || blockMinutes === 90 ? blockMinutes : 50) as 25 | 50 | 90, bufferRatio, autoLog: true, breakMinutes: (breakMinutes === 5 || breakMinutes === 15 ? breakMinutes : 10) as 5 | 10 | 15, minBlockMinutes: (minBlockMinutes === 15 || minBlockMinutes === 25 ? minBlockMinutes : 20) as 15 | 20 | 25, peakStartHour, peakEndHour, baseDailyMinutes: 240, weeklyLoad: { 0: 100, 1: 100, 2: 100, 3: 100, 4: 100, 5: 100, 6: 100 } }
+  const defaultPreferences: UserPreferences = options?.preferences ?? { defaultBlockMinutes: (blockMinutes === 25 || blockMinutes === 90 ? blockMinutes : 50) as 25 | 50 | 90, bufferRatio, autoLog: true, breakMinutes: (breakMinutes === 5 || breakMinutes === 15 ? breakMinutes : 10) as 5 | 10 | 15, minBlockMinutes: (minBlockMinutes === 15 || minBlockMinutes === 25 ? minBlockMinutes : 20) as 15 | 20 | 25, peakStartHour, peakEndHour, baseDailyMinutes: sharedDefaults.baseDailyMinutes, weeklyLoad: sharedDefaults.weeklyLoad }
   const capacityByDay = new Map<string, number>()
   for (let day = 0; day < horizonDays; day += 1) {
     const date = new Date(monday); date.setDate(monday.getDate() + day)
@@ -239,9 +242,12 @@ export function buildSchedule(tasks: Task[], availability: AvailabilityRule[], f
   const retainedIntervals = retained.map(item => ({ start: new Date(item.startTime), end: new Date(item.endTime) })); let free = subtractIntervals(capacityIntervals, retainedIntervals).sort((a, b) => a.start.getTime() - b.start.getTime())
   const retainedPlannedByDay = new Map<string, number>(); const retainedPlannedByTask = new Map<string, number>()
   retained.forEach(item => {
-    if (item.status === 'completed') return
-    const minutes = minutesBetween(item.startTime, item.endTime); const dayKey = localDateKey(new Date(item.startTime))
-    retainedPlannedByDay.set(dayKey, (retainedPlannedByDay.get(dayKey) ?? 0) + minutes); retainedPlannedByTask.set(item.taskId, (retainedPlannedByTask.get(item.taskId) ?? 0) + minutes)
+    for (let day = 0; day < horizonDays; day++) {
+      const date = new Date(monday); date.setDate(date.getDate() + day)
+      const key = localDateKey(date)
+      retainedPlannedByDay.set(key, (retainedPlannedByDay.get(key) ?? 0) + scheduleMinutesOnDate(date, item))
+    }
+    if (item.status !== 'completed') retainedPlannedByTask.set(item.taskId, (retainedPlannedByTask.get(item.taskId) ?? 0) + minutesBetween(item.startTime, item.endTime))
   })
   const usedCapacityByDay = new Map(retainedPlannedByDay)
   capacityByDay.forEach((limit, key) => { usedCapacityByDay.set(key, Math.min(usedCapacityByDay.get(key) ?? 0, limit)) })
@@ -251,6 +257,17 @@ export function buildSchedule(tasks: Task[], availability: AvailabilityRule[], f
     return { task, remaining, initialRemaining: remaining, deadline: deadline.deadline, explicitDeadline: deadline.explicit, allocatedByDay: new Map<string, number>(), generated: [] }
   }).filter(state => state.remaining > 0)
   const targetByDay = buildIdealLoad(states, free, retainedPlannedByDay); const plannedByDay = new Map(retainedPlannedByDay); const conflicts: string[] = []
+  retained.forEach(item => {
+    const start = new Date(item.startTime); const end = new Date(item.endTime); const task = taskById.get(item.taskId)
+    const reasons = new Set<string>()
+    if (task?.deadlineIso && end > new Date(task.deadlineIso)) reasons.add('超过截止时间')
+    for (const date = new Date(start.getFullYear(), start.getMonth(), start.getDate()); date < end; date.setDate(date.getDate() + 1)) {
+      if (overlapsForDate(date, availability, []).some(block => block.start < end && block.end > start)) reasons.add('不可用时间')
+      if (overlapsForDate(date, [], fixedEvents).some(block => block.start < end && block.end > start)) reasons.add('固定课程')
+      if ((retainedPlannedByDay.get(localDateKey(date)) ?? 0) > (capacityByDay.get(localDateKey(date)) ?? Infinity)) reasons.add('超过每日容量')
+    }
+    if (reasons.size) conflicts.push(`${task?.title ?? item.taskId}：保留安排与${[...reasons].join('、')}冲突，请编辑安排`)
+  })
   let iterations = 0
   while (states.some(state => state.remaining > 0) && iterations < 10000) {
     iterations += 1; let best: Candidate | null = null
@@ -281,14 +298,14 @@ export function buildSchedule(tasks: Task[], availability: AvailabilityRule[], f
         else { duration = chooseDuration(state.remaining, preferred, Math.min(available, capacityRemainingToday), minBlockMinutes, dailyRemaining); if (duration < minimum) continue }
         for (const start of candidateStarts(interval, duration, state.deadline, peakStartHour, existingItems.filter(item => item.taskId === state.task.id))) {
           const end = new Date(start.getTime() + duration * 60_000); const base = { state, start, end, duration, dayKey }
-          const candidate = { ...base, score: scoreCandidate(base, states, free, targetByDay, plannedByDay, capacityByDay, existingItems, { strategy, peakStartHour, peakEndHour }, now) }
+          const candidate = { ...base, score: scoreCandidate(base, states, free, targetByDay, plannedByDay, capacityByDay, existingItems, { strategy, peakStartHour, peakEndHour }, now) + habitCandidateScore(options?.preferences?.habitLearningEnabled === false ? undefined : options?.learnedPreferences, state.task, start, duration) }
           if (!best || candidate.score > best.score + EPSILON || (Math.abs(candidate.score - best.score) <= EPSILON && (candidate.start < best.start || (candidate.start.getTime() === best.start.getTime() && candidate.state.task.id < best.state.task.id)))) best = candidate
         }
       }
     }
     if (!best) break
     const { state, start, end, duration, dayKey } = best
-    const item: ScheduleItem = { id: `local-schedule-item-${state.task.id}-${start.getTime()}`, taskId: state.task.id, startTime: start.toISOString(), endTime: end.toISOString(), locked: false, status: 'planned' }
+    const item: ScheduleItem = { id: `local-schedule-item-${state.task.id}-${start.getTime()}`, taskId: state.task.id, startTime: start.toISOString(), endTime: end.toISOString(), locked: false, status: 'planned', source: 'auto' }
     state.generated.push(item); state.remaining = Math.max(0, state.remaining - duration); state.allocatedByDay.set(dayKey, (state.allocatedByDay.get(dayKey) ?? 0) + duration)
     if ((state.task.completionMode ?? 'smart') === 'single_day' && !state.selectedDay) state.selectedDay = dayKey
     plannedByDay.set(dayKey, (plannedByDay.get(dayKey) ?? 0) + duration)

@@ -17,11 +17,11 @@ const clamp = (n: number, min: number, max: number) => Math.min(Math.max(n, min)
 const minutes = (start: Date, end: Date) => Math.max(0, Math.floor((end.getTime() - start.getTime()) / 60_000))
 function dayStart(date: Date) { const value = new Date(date); value.setHours(0, 0, 0, 0); return value }
 function at(date: Date, minute: number) { const value = dayStart(date); value.setMinutes(minute); return value }
-function mergeIntervals(intervals: TimeInterval[]) {
+export function mergeIntervals(intervals: TimeInterval[]) {
   const sorted = intervals.filter(item => item.end > item.start).sort((a, b) => a.start.getTime() - b.start.getTime())
   return sorted.reduce<TimeInterval[]>((merged, item) => { const last = merged[merged.length - 1]; if (last && item.start <= last.end) last.end = new Date(Math.max(last.end.getTime(), item.end.getTime())); else merged.push({ start: new Date(item.start), end: new Date(item.end) }); return merged }, [])
 }
-function overlapsForDate(date: Date, unavailableRules: AvailabilityRule[], fixedEvents: FixedEvent[]) {
+export function overlapsForDate(date: Date, unavailableRules: AvailabilityRule[], fixedEvents: FixedEvent[]) {
   const key = localDateKey(date); const weekday = date.getDay(); const startOfDate = dayStart(date); const endOfDate = new Date(startOfDate.getTime() + DAY); const blocked: TimeInterval[] = []
   unavailableRules.filter(rule => rule.weekday === weekday).forEach(rule => { const [sh, sm] = rule.startTime.split(':').map(Number); const [eh, em] = rule.endTime.split(':').map(Number); blocked.push({ start: at(date, sh * 60 + sm), end: at(date, eh * 60 + em) }) })
   fixedEvents.forEach(event => {
@@ -50,6 +50,33 @@ function freeForDate(date: Date, unavailableRules: AvailabilityRule[], fixedEven
   if (cursor < end) free.push({ start: cursor, end })
   return free.map(item => ({ start: item.start < now && localDateKey(item.start) === localDateKey(now) ? new Date(now) : item.start, end: item.end })).filter(item => item.end > item.start)
 }
+export function getDayBounds(date: Date): TimeInterval {
+  const start = dayStart(date); const end = new Date(start); end.setDate(end.getDate() + 1)
+  return { start, end }
+}
+export function clipInterval(interval: TimeInterval, range: TimeInterval): TimeInterval | null {
+  const start = new Date(Math.max(interval.start.getTime(), range.start.getTime()))
+  const end = new Date(Math.min(interval.end.getTime(), range.end.getTime()))
+  return start < end ? { start, end } : null
+}
+export function scheduleMinutesOnDate(date: Date, item: ScheduleItem): number {
+  const clipped = clipInterval({ start: new Date(item.startTime), end: new Date(item.endTime) }, getDayBounds(date))
+  return clipped ? minutes(clipped.start, clipped.end) : 0
+}
+export function scheduledIntervalsForDate(date: Date, items: ScheduleItem[], now?: Date): TimeInterval[] {
+  const range = getDayBounds(date)
+  if (now && now > range.start) range.start = now
+  return items.map(item => clipInterval({ start: new Date(item.startTime), end: new Date(item.endTime) }, range)).filter((item): item is TimeInterval => item !== null)
+}
+export function subtractIntervals(source: TimeInterval[], blocked: TimeInterval[]): TimeInterval[] {
+  return mergeIntervals(blocked).reduce((parts, block) => parts.flatMap(part => {
+    if (block.end <= part.start || block.start >= part.end) return [part]
+    const result: TimeInterval[] = []
+    if (part.start < block.start) result.push({ start: part.start, end: block.start })
+    if (part.end > block.end) result.push({ start: block.end, end: part.end })
+    return result
+  }), mergeIntervals(source))
+}
 function profileFor(dateKey: string, profiles: CapacityProfile[]) {
   return profiles.filter(profile => profile.enabled && profile.startDate <= dateKey && profile.endDate >= dateKey).sort((a, b) => b.priority - a.priority || (b.updatedAt ?? '').localeCompare(a.updatedAt ?? '') || a.id.localeCompare(b.id))[0]
 }
@@ -64,7 +91,9 @@ export function getDailyCapacityBreakdown({ date, now = date, preferences, profi
   const dateKey = localDateKey(date); const weekday = date.getDay() as Weekday; const target = resolveDailyTarget({ date, preferences, profiles, overrides }); const blocked = overlapsForDate(date, unavailableRules, fixedEvents)
   const unavailableOnly = overlapsForDate(date, unavailableRules, []).reduce((sum, item) => sum + minutes(item.start, item.end), 0); const fixedOnly = overlapsForDate(date, [], fixedEvents).reduce((sum, item) => sum + minutes(item.start, item.end), 0)
   const blockedMinutes = blocked.reduce((sum, item) => sum + minutes(item.start, item.end), 0); const hardAvailableMinutes = 1440 - blockedMinutes; const bufferMinutes = Math.floor(hardAvailableMinutes * clamp(preferences.bufferRatio, 0, 0.3)); const windowBudgetMinutes = Math.max(0, hardAvailableMinutes - bufferMinutes); const effectiveCapacityMinutes = Math.min(target.targetMinutes, windowBudgetMinutes)
-  const dayStartValue = dayStart(date); const dayEndValue = new Date(dayStartValue.getTime() + DAY)
-  const scheduledMinutes = scheduleItems.reduce((sum, item) => { const start = new Date(item.startTime); const end = new Date(item.endTime); if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end <= dayStartValue || start >= dayEndValue) return sum; return sum + minutes(start < dayStartValue ? dayStartValue : start, end > dayEndValue ? dayEndValue : end) }, 0); const remainingCapacityMinutes = Math.max(0, effectiveCapacityMinutes - scheduledMinutes); const futureFreeMinutes = freeForDate(date, unavailableRules, fixedEvents, now).reduce((sum, item) => sum + minutes(item.start, item.end), 0); const allocatableNowMinutes = Math.min(remainingCapacityMinutes, futureFreeMinutes)
+  const scheduledMinutes = scheduleItems.reduce((sum, item) => sum + scheduleMinutesOnDate(date, item), 0)
+  const remainingCapacityMinutes = Math.max(0, effectiveCapacityMinutes - scheduledMinutes)
+  const futureFreeMinutes = subtractIntervals(freeForDate(date, unavailableRules, fixedEvents, now), scheduledIntervalsForDate(date, scheduleItems, now)).reduce((sum, item) => sum + minutes(item.start, item.end), 0)
+  const allocatableNowMinutes = Math.max(0, Math.min(remainingCapacityMinutes, futureFreeMinutes))
   return { dateKey, weekday, ...target, dayMinutes: 1440, unavailableMinutes: unavailableOnly, fixedEventMinutes: fixedOnly, overlapDedupedMinutes: Math.max(0, unavailableOnly + fixedOnly - blockedMinutes), blockedMinutes, hardAvailableMinutes, bufferMinutes, windowBudgetMinutes, effectiveCapacityMinutes, scheduledMinutes, remainingCapacityMinutes, futureFreeMinutes, allocatableNowMinutes, constrainedByTimeWindow: target.targetMinutes > windowBudgetMinutes, overloaded: effectiveCapacityMinutes === 0 ? scheduledMinutes > 0 : scheduledMinutes > effectiveCapacityMinutes }
 }

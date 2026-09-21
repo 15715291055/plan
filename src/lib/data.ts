@@ -1,6 +1,8 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 import { z } from 'zod'
 
+import type { ScheduleAdjustmentEvent } from './habits'
+
 export type TaskStatus = 'todo' | 'done'
 export type TaskCompletionMode = 'smart' | 'single_day' | 'spread_days'
 
@@ -33,6 +35,7 @@ export type Task = {
   spreadDays?: number
   requireContinuous?: boolean
   completedMinutes?: number
+  completedAt?: string | null
 }
 
 export type Course = {
@@ -46,6 +49,7 @@ export type Course = {
 }
 
 export type WorkspaceData = {
+  adjustmentEvents: ScheduleAdjustmentEvent[]
   tasks: Task[]
   courses: Course[]
   availability: AvailabilityRule[]
@@ -63,7 +67,7 @@ export type WorkspaceData = {
 
 export type AvailabilityRule = { id: string; weekday: number; startTime: string; endTime: string }
 export type FixedEvent = { id: string; title: string; startTime: string; endTime: string; recurrenceRule?: string }
-export type ScheduleItem = { id: string; taskId: string; startTime: string; endTime: string; locked: boolean; status: string }
+export type ScheduleItem = { id: string; taskId: string; startTime: string; endTime: string; locked: boolean; status: string; source?: 'auto' | 'manual' | 'imported'; manuallyAdjustedAt?: string | null }
 export type MaterialTask = { title: string; estimated_minutes: number; difficulty: number; task_type: string }
 export type MaterialAnalysis = { chapters: string[]; knowledge_points: string[]; tasks: MaterialTask[]; summary: string }
 export type Material = { id: string; fileName: string; fileType: string; fileSize?: number; status: string; course?: string; createdAt: string; storagePath?: string; analysisResult?: MaterialAnalysis }
@@ -91,12 +95,12 @@ export type DailyCapacityOverride = {
   createdAt?: string
   updatedAt?: string
 }
-export type UserPreferences = { defaultBlockMinutes: 25 | 50 | 90; bufferRatio: number; autoLog: boolean; breakMinutes: 5 | 10 | 15; minBlockMinutes: 15 | 20 | 25; peakStartHour: number; peakEndHour: number; baseDailyMinutes: number; weeklyLoad: WeeklyLoad }
+export type UserPreferences = { habitLearningEnabled?: boolean; defaultBlockMinutes: 25 | 50 | 90; bufferRatio: number; autoLog: boolean; breakMinutes: 5 | 10 | 15; minBlockMinutes: 15 | 20 | 25; peakStartHour: number; peakEndHour: number; baseDailyMinutes: number; weeklyLoad: WeeklyLoad }
 export type UserProfile = { displayName: string; avatarUrl?: string }
 
 export type ScheduleInput = {
   reason?: string
-  items: Array<{ taskId: string; startTime: string; endTime: string; locked?: boolean; status?: string }>
+  items: Array<Omit<ScheduleItem, 'id'> & { id?: string }>
 }
 
 export type TaskDraft = {
@@ -124,8 +128,9 @@ const taskCompletionSchema = z.object({
 })
 
 const courseColors = ['#2673e8', '#e47735', '#2a9b83', '#d84d78', '#8d68c3', '#b38a32']
+export const DEFAULT_BASE_DAILY_MINUTES = 240
 export const defaultWeeklyLoad: WeeklyLoad = { 0: 100, 1: 100, 2: 100, 3: 100, 4: 100, 5: 100, 6: 100 }
-export const defaultPreferences: UserPreferences = { defaultBlockMinutes: 50, bufferRatio: 0.15, autoLog: true, breakMinutes: 10, minBlockMinutes: 20, peakStartHour: 9, peakEndHour: 12, baseDailyMinutes: 240, weeklyLoad: defaultWeeklyLoad }
+export const defaultPreferences: UserPreferences = { defaultBlockMinutes: 50, bufferRatio: 0.15, autoLog: true, breakMinutes: 10, minBlockMinutes: 20, peakStartHour: 9, peakEndHour: 12, baseDailyMinutes: DEFAULT_BASE_DAILY_MINUTES, weeklyLoad: defaultWeeklyLoad, habitLearningEnabled: true }
 export const defaultUserProfile: UserProfile = { displayName: '学习者', avatarUrl: '' }
 
 export const demoCourses: Course[] = [
@@ -175,7 +180,8 @@ export async function signOut(): Promise<void> {
 
 function localTasks(): Task[] {
   try {
-    const raw = localStorage.getItem('study-tasks')
+    const snapshot = localStorage.getItem('study-plan-state')
+    const raw = snapshot ? JSON.stringify(JSON.parse(snapshot).tasks) : localStorage.getItem('study-tasks')
     const parsed = raw ? (JSON.parse(raw) as Task[]) : demoTasks
     return parsed.map(task => ({ ...task, id: String(task.id), courseId: task.courseId ? String(task.courseId) : undefined, completionMode: task.completionMode ?? 'smart' }))
   } catch { return demoTasks }
@@ -205,7 +211,8 @@ function localFixedEvents(): FixedEvent[] {
 
 function localScheduleItems(): ScheduleItem[] {
   try {
-    const raw = localStorage.getItem('study-schedule-items')
+    const snapshot = localStorage.getItem('study-plan-state')
+    const raw = snapshot ? JSON.stringify(JSON.parse(snapshot).scheduleItems) : localStorage.getItem('study-schedule-items')
     return raw ? JSON.parse(raw) as ScheduleItem[] : []
   } catch { return [] }
 }
@@ -234,12 +241,13 @@ function localPreferences(): UserPreferences {
     return {
       defaultBlockMinutes: block === 25 || block === 90 ? block : 50,
       bufferRatio: Number.isFinite(buffer) ? Math.min(Math.max(buffer, 0), 0.3) : defaultPreferences.bufferRatio,
+      habitLearningEnabled: parsed.habitLearningEnabled !== false,
       autoLog: parsed.autoLog !== false,
       breakMinutes: parsed.breakMinutes === 5 || parsed.breakMinutes === 15 ? parsed.breakMinutes : 10,
       minBlockMinutes: parsed.minBlockMinutes === 15 || parsed.minBlockMinutes === 25 ? parsed.minBlockMinutes : 20,
       peakStartHour: Number.isInteger(parsed.peakStartHour) ? Math.min(Math.max(parsed.peakStartHour ?? 9, 0), 23) : 9,
       peakEndHour: Number.isInteger(parsed.peakEndHour) ? Math.min(Math.max(parsed.peakEndHour ?? 12, 1), 24) : 12,
-      baseDailyMinutes: Number.isInteger(parsed.baseDailyMinutes) ? Math.min(Math.max(parsed.baseDailyMinutes ?? 240, 0), 1440) : 240,
+      baseDailyMinutes: Number.isInteger(parsed.baseDailyMinutes) ? Math.min(Math.max(parsed.baseDailyMinutes ?? DEFAULT_BASE_DAILY_MINUTES, 0), 960) : DEFAULT_BASE_DAILY_MINUTES,
       weeklyLoad: Object.fromEntries([0, 1, 2, 3, 4, 5, 6].map(day => [day, Number.isInteger(parsed.weeklyLoad?.[day as Weekday]) ? Math.min(Math.max(parsed.weeklyLoad?.[day as Weekday] ?? 100, 0), 200) : 100])) as WeeklyLoad,
     }
   } catch { return defaultPreferences }
@@ -283,6 +291,7 @@ function localUserProfile(): UserProfile {
 
 function localWorkspace(): WorkspaceData {
   return {
+    adjustmentEvents: localAdjustmentEvents(),
     tasks: localTasks(),
     courses: localCourses(),
     availability: localAvailability(),
@@ -334,7 +343,7 @@ function mapTask(row: Record<string, unknown>, courses: Course[], schedule: Sche
     id: String(row.id), title: String(row.title), course: course.name, courseId: course.id,
     color: course.color, deadline: formatDeadline(row.deadline as string | null), deadlineIso: row.deadline as string | undefined,
     minutes: Number(row.estimated_minutes ?? 30), priority: Number(row.priority ?? 0), difficulty: difficultyLabel(row.difficulty as number | null),
-    status: row.status === 'completed' ? 'done' : row.status === 'done' ? 'done' : 'todo', type: String(row.task_type ?? '学习'), slot: scheduleItem?.startTime?.slice(11, 16), source: String(row.source ?? 'manual'), note: String(row.description ?? ''), completionMode, spreadDays, requireContinuous, completedMinutes,
+    completedAt: row.completed_at as string | null, status: row.status === 'completed' ? 'done' : row.status === 'done' ? 'done' : 'todo', type: String(row.task_type ?? '学习'), slot: scheduleItem?.startTime?.slice(11, 16), source: String(row.source ?? 'manual'), note: String(row.description ?? ''), completionMode, spreadDays, requireContinuous, completedMinutes,
   }
 }
 
@@ -347,30 +356,35 @@ export async function loadWorkspace(): Promise<WorkspaceData> {
   if (!supabase) return localWorkspace()
   const userId = await currentUserId(supabase)
   if (!userId) return { ...localWorkspace(), error: 'Supabase 已配置，但当前没有登录用户，暂时使用本地数据。' }
-  const [courseResult, taskResult, availabilityResult, fixedResult, scheduleResult, materialResult, logResult, preferencesResult, profileResult, profileModesResult, overrideResult] = await Promise.all([
+  const [courseResult, taskResult, availabilityResult, fixedResult, scheduleResult, materialResult, logResult, preferencesResult, profileResult, profileModesResult, overrideResult, adjustmentsResult] = await Promise.all([
     supabase.from('courses').select('*').order('created_at'),
     supabase.from('tasks').select('*').order('deadline', { ascending: true, nullsFirst: false }),
     supabase.from('availability_rules').select('*').order('weekday'),
     supabase.from('fixed_events').select('*').order('start_time'),
-    supabase.from('schedule_items').select('id,task_id,start_time,end_time,locked,status,schedules!inner(is_active)').eq('schedules.is_active', true),
+    supabase.from('schedule_items').select('id,task_id,start_time,end_time,locked,status,source,manually_adjusted_at,schedules!inner(is_active)').eq('schedules.is_active', true),
     supabase.from('materials').select('id,file_name,file_type,file_size,status,storage_path,analysis_result,created_at,courses(name)').order('created_at', { ascending: false }),
     supabase.from('study_logs').select('id,task_id,planned_minutes,actual_minutes,quality,completed_at').order('completed_at', { ascending: false }),
-    supabase.from('user_preferences').select('default_block_minutes,buffer_ratio,auto_log,break_minutes,min_block_minutes,peak_start_hour,peak_end_hour,base_daily_minutes,load_sun,load_mon,load_tue,load_wed,load_thu,load_fri,load_sat').maybeSingle(),
+    supabase.from('user_preferences').select('habit_learning_enabled,default_block_minutes,buffer_ratio,auto_log,break_minutes,min_block_minutes,peak_start_hour,peak_end_hour,base_daily_minutes,load_sun,load_mon,load_tue,load_wed,load_thu,load_fri,load_sat').maybeSingle(),
     supabase.from('user_profiles').select('display_name,avatar_url').maybeSingle(),
     supabase.from('capacity_profiles').select('*').order('priority', { ascending: false }).order('updated_at', { ascending: false }),
     supabase.from('daily_capacity_overrides').select('*').order('override_date'),
+    supabase.from('schedule_adjustment_events').select('*').order('created_at'),
   ])
+  const capacityError = [preferencesResult, profileModesResult, overrideResult, adjustmentsResult].find(result => result.error)?.error
+  if (capacityError) throw new Error(isCapacitySchemaError(capacityError) ? '每日容量或习惯数据库结构未升级，请执行最新 Supabase migration。' : `设置读取失败：${capacityError.message}`)
   const firstError = [courseResult, taskResult, availabilityResult, fixedResult, scheduleResult, materialResult, logResult].find(result => result.error)?.error
-  if (firstError) return { ...localWorkspace(), error: `数据库读取失败：${firstError.message}` }
+  if (firstError) throw new Error(`数据库读取失败：${firstError.message}`)
   const courses: Course[] = (courseResult.data ?? []).map(row => ({ id: row.id, name: row.name, code: row.code ?? undefined, color: row.color ?? courseColors[0], semester: row.semester ?? undefined, description: row.description ?? undefined }))
-  const scheduleItems: ScheduleItem[] = (scheduleResult.data ?? []).map(row => ({ id: row.id, taskId: row.task_id, startTime: row.start_time, endTime: row.end_time, locked: Boolean(row.locked), status: row.status ?? 'planned' }))
+  const scheduleItems: ScheduleItem[] = (scheduleResult.data ?? []).map(row => ({ id: row.id, taskId: row.task_id, startTime: row.start_time, endTime: row.end_time, source: row.source ?? 'auto', manuallyAdjustedAt: row.manually_adjusted_at, locked: Boolean(row.locked), status: row.status ?? 'planned' }))
   return {
+    adjustmentEvents: (adjustmentsResult.data ?? []).map(mapAdjustmentEvent),
     courses, tasks: (taskResult.data ?? []).map(row => mapTask(row, courses, scheduleItems)), source: 'supabase',
     availability: (availabilityResult.data ?? []).map(row => ({ id: row.id, weekday: row.weekday, startTime: row.start_time, endTime: row.end_time })),
     fixedEvents: (fixedResult.data ?? []).map(row => ({ id: row.id, title: row.title, startTime: row.start_time, endTime: row.end_time, recurrenceRule: row.recurrence_rule ?? undefined })),
     scheduleItems, materials: (materialResult.data ?? []).map(row => ({ id: row.id, fileName: row.file_name, fileType: row.file_type, fileSize: row.file_size ?? undefined, status: row.status, course: (row.courses as { name?: string } | null)?.name, storagePath: row.storage_path ?? undefined, analysisResult: row.analysis_result as MaterialAnalysis | undefined, createdAt: row.created_at })),
     studyLogs: (logResult.data ?? []).map(row => ({ id: row.id, taskId: row.task_id, plannedMinutes: row.planned_minutes ?? undefined, actualMinutes: row.actual_minutes ?? undefined, quality: row.quality ?? undefined, completedAt: row.completed_at ?? undefined })),
-    preferences: preferencesResult.error ? defaultPreferences : {
+    preferences: {
+      habitLearningEnabled: preferencesResult.data?.habit_learning_enabled !== false,
       defaultBlockMinutes: Number(preferencesResult.data?.default_block_minutes) === 25 || Number(preferencesResult.data?.default_block_minutes) === 90 ? Number(preferencesResult.data?.default_block_minutes) as 25 | 90 : 50,
       bufferRatio: Math.min(Math.max(Number(preferencesResult.data?.buffer_ratio ?? defaultPreferences.bufferRatio), 0), 0.3),
       autoLog: preferencesResult.data?.auto_log !== false,
@@ -381,7 +395,7 @@ export async function loadWorkspace(): Promise<WorkspaceData> {
       baseDailyMinutes: Number(preferencesResult.data?.base_daily_minutes ?? 240),
       weeklyLoad: { 0: Number(preferencesResult.data?.load_sun ?? 100), 1: Number(preferencesResult.data?.load_mon ?? 100), 2: Number(preferencesResult.data?.load_tue ?? 100), 3: Number(preferencesResult.data?.load_wed ?? 100), 4: Number(preferencesResult.data?.load_thu ?? 100), 5: Number(preferencesResult.data?.load_fri ?? 100), 6: Number(preferencesResult.data?.load_sat ?? 100) },
     },
-    capacityProfiles: profileModesResult.error ? [] : (profileModesResult.data ?? []).map(row => ({ id: row.id, name: row.name, startDate: row.start_date, endDate: row.end_date, baseDailyMinutes: row.base_daily_minutes ?? undefined, weeklyLoad: { 0: row.load_sun, 1: row.load_mon, 2: row.load_tue, 3: row.load_wed, 4: row.load_thu, 5: row.load_fri, 6: row.load_sat }, priority: row.priority ?? 0, enabled: row.enabled !== false, createdAt: row.created_at, updatedAt: row.updated_at })),
+    capacityProfiles: profileModesResult.error ? [] : (profileModesResult.data ?? []).map(row => ({ id: row.id, name: row.name, startDate: row.start_date, endDate: row.end_date, baseDailyMinutes: row.base_daily_minutes ?? undefined, weeklyLoad: Object.fromEntries([row.load_sun, row.load_mon, row.load_tue, row.load_wed, row.load_thu, row.load_fri, row.load_sat].flatMap((value, day) => value == null ? [] : [[day, value]])), priority: row.priority ?? 0, enabled: row.enabled !== false, createdAt: row.created_at, updatedAt: row.updated_at })),
     dailyCapacityOverrides: overrideResult.error ? [] : (overrideResult.data ?? []).map(row => ({ id: row.id, date: row.override_date, loadPercent: row.load_percent ?? undefined, capacityMinutes: row.capacity_minutes ?? undefined, reason: row.reason ?? undefined, createdAt: row.created_at, updatedAt: row.updated_at })),
     profile: profileResult.error ? defaultUserProfile : {
       displayName: profileResult.data?.display_name?.trim() || defaultUserProfile.displayName,
@@ -407,11 +421,19 @@ export async function createTask(input: { title: string; minutes: number; course
   return mapTask(data, course, [])
 }
 
-export async function updateTaskStatus(id: string, status: TaskStatus): Promise<void> {
-  if (!supabase || id.startsWith('local-') || !(await currentUserId(supabase))) return
-  const { error } = await supabase.from('tasks').update({ status: status === 'done' ? 'completed' : 'todo', updated_at: new Date().toISOString() }).eq('id', id)
+export async function updateTaskStatus(id: string, status: TaskStatus, now = new Date()): Promise<void> {
+  if (!supabase || !(await currentUserId(supabase))) {
+    const tasks = localTasks().map(task => task.id === id ? { ...task, status, completedAt: status === 'done' ? now.toISOString() : null, completedMinutes: status === 'todo' ? 0 : task.completedMinutes } : task)
+    const scheduleItems = localScheduleItems().filter(item => status !== 'done' || item.taskId !== id || !isFutureScheduleItem(item, now))
+    localStorage.setItem('study-plan-state', JSON.stringify({ tasks, scheduleItems }))
+    return
+  }
+  const { error } = status === 'done'
+    ? await supabase.rpc('complete_task_and_cleanup_schedule', { p_task_id: id, p_completed_at: now.toISOString() })
+    : await supabase.rpc('restore_completed_task', { p_task_id: id })
   if (error) throw error
 }
+export function isFutureScheduleItem(item: ScheduleItem, now: Date): boolean { return new Date(item.startTime) > now }
 
 export async function updateTask(id: string, input: { title: string; minutes: number; course: string; deadlineIso?: string | null; difficulty?: number; priority?: number; type?: string; completionMode?: TaskCompletionMode; spreadDays?: number; requireContinuous?: boolean; completedMinutes?: number }): Promise<void> {
   const parsed = taskInputSchema.parse(input)
@@ -511,16 +533,17 @@ export async function createStudyLog(input: { taskId: string; plannedMinutes?: n
 }
 
 export async function saveSchedule(input: ScheduleInput): Promise<{ id: string; items: ScheduleItem[] }> {
-  const parsed = z.object({ reason: z.string().optional(), items: z.array(z.object({ taskId: z.string().min(1), startTime: z.string().min(1), endTime: z.string().min(1), locked: z.boolean().optional(), status: z.string().optional() })) }).parse(input)
+  const parsed = z.object({ reason: z.string().optional(), items: z.array(z.object({ taskId: z.string().min(1), startTime: z.string().min(1), endTime: z.string().min(1), locked: z.boolean().optional(), status: z.string().optional(), source: z.enum(['auto', 'manual', 'imported']).default('auto'), manuallyAdjustedAt: z.string().nullable().optional() })) }).parse(input)
   if (!supabase || !(await currentUserId(supabase))) {
-    const items = parsed.items.map((item, index) => ({ id: `local-schedule-item-${Date.now()}-${index}`, taskId: item.taskId, startTime: item.startTime, endTime: item.endTime, locked: item.locked ?? false, status: item.status ?? 'planned' }))
+    const items = parsed.items.map((item, index) => ({ id: `local-schedule-item-${Date.now()}-${index}`, source: item.source, manuallyAdjustedAt: item.manuallyAdjustedAt, taskId: item.taskId, startTime: item.startTime, endTime: item.endTime, locked: item.locked ?? false, status: item.status ?? 'planned' }))
+    localStorage.setItem('study-plan-state', JSON.stringify({ tasks: localTasks(), scheduleItems: items }))
     return { id: `local-schedule-${Date.now()}`, items }
   }
   const { data: schedule, error: scheduleError } = await supabase.from('schedules').insert({ reason: parsed.reason ?? null, is_active: false }).select('id').single()
   if (scheduleError) throw scheduleError
-  let rows: Array<{ id: string; task_id: string; start_time: string; end_time: string; locked: boolean; status: string }> = []
+  let rows: Array<{ id: string; task_id: string; start_time: string; end_time: string; locked: boolean; status: string; source: 'auto' | 'manual' | 'imported'; manually_adjusted_at: string | null }> = []
   if (parsed.items.length > 0) {
-    const { data, error: itemError } = await supabase.from('schedule_items').insert(parsed.items.map(item => ({ schedule_id: schedule.id, task_id: item.taskId, start_time: item.startTime, end_time: item.endTime, locked: item.locked ?? false, status: item.status ?? 'planned' }))).select('*')
+    const { data, error: itemError } = await supabase.from('schedule_items').insert(parsed.items.map(item => ({ schedule_id: schedule.id, source: item.source, manually_adjusted_at: item.manuallyAdjustedAt ?? null, task_id: item.taskId, start_time: item.startTime, end_time: item.endTime, locked: item.locked ?? false, status: item.status ?? 'planned' }))).select('*')
     if (itemError) throw itemError
     rows = data ?? []
   }
@@ -528,7 +551,7 @@ export async function saveSchedule(input: ScheduleInput): Promise<{ id: string; 
   if (previousError) throw previousError
   const { error: activateError } = await supabase.from('schedules').update({ is_active: true }).eq('id', schedule.id)
   if (activateError) throw activateError
-  return { id: schedule.id, items: rows.map(row => ({ id: row.id, taskId: row.task_id, startTime: row.start_time, endTime: row.end_time, locked: Boolean(row.locked), status: row.status })) }
+  return { id: schedule.id, items: rows.map(row => ({ id: row.id, taskId: row.task_id, startTime: row.start_time, endTime: row.end_time, source: row.source ?? 'auto', manuallyAdjustedAt: row.manually_adjusted_at, locked: Boolean(row.locked), status: row.status })) }
 }
 
 const allowedMaterialTypes = new Set(['application/pdf', 'application/vnd.openxmlformats-officedocument.presentationml.presentation', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'image/jpeg', 'image/png'])
@@ -569,24 +592,25 @@ export async function savePreferences(input: UserPreferences): Promise<UserPrefe
   const parsed = z.object({
     defaultBlockMinutes: z.union([z.literal(25), z.literal(50), z.literal(90)]),
     bufferRatio: z.number().min(0).max(0.3),
+    habitLearningEnabled: z.boolean().default(true),
     autoLog: z.boolean(),
     breakMinutes: z.union([z.literal(5), z.literal(10), z.literal(15)]),
     minBlockMinutes: z.union([z.literal(15), z.literal(20), z.literal(25)]),
     peakStartHour: z.number().int().min(0).max(23),
     peakEndHour: z.number().int().min(1).max(24),
-    baseDailyMinutes: z.number().int().min(0).max(1440),
+    baseDailyMinutes: z.number().int().min(0).max(960),
     weeklyLoad: z.object({ 0: z.number().int().min(0).max(200), 1: z.number().int().min(0).max(200), 2: z.number().int().min(0).max(200), 3: z.number().int().min(0).max(200), 4: z.number().int().min(0).max(200), 5: z.number().int().min(0).max(200), 6: z.number().int().min(0).max(200) }),
   }).parse(input)
-  if (!supabase || !(await currentUserId(supabase))) return parsed
-  const { data, error } = await supabase.from('user_preferences').upsert({ default_block_minutes: parsed.defaultBlockMinutes, buffer_ratio: parsed.bufferRatio, auto_log: parsed.autoLog, break_minutes: parsed.breakMinutes, min_block_minutes: parsed.minBlockMinutes, peak_start_hour: parsed.peakStartHour, peak_end_hour: parsed.peakEndHour, base_daily_minutes: parsed.baseDailyMinutes, load_sun: parsed.weeklyLoad[0], load_mon: parsed.weeklyLoad[1], load_tue: parsed.weeklyLoad[2], load_wed: parsed.weeklyLoad[3], load_thu: parsed.weeklyLoad[4], load_fri: parsed.weeklyLoad[5], load_sat: parsed.weeklyLoad[6] }, { onConflict: 'user_id' }).select('*').single()
+  if (!supabase || !(await currentUserId(supabase))) { localStorage.setItem('study-preferences', JSON.stringify(parsed)); return parsed }
+  const { data, error } = await supabase.from('user_preferences').upsert({ user_id: await currentUserId(supabase), habit_learning_enabled: parsed.habitLearningEnabled, default_block_minutes: parsed.defaultBlockMinutes, buffer_ratio: parsed.bufferRatio, auto_log: parsed.autoLog, break_minutes: parsed.breakMinutes, min_block_minutes: parsed.minBlockMinutes, peak_start_hour: parsed.peakStartHour, peak_end_hour: parsed.peakEndHour, base_daily_minutes: parsed.baseDailyMinutes, load_sun: parsed.weeklyLoad[0], load_mon: parsed.weeklyLoad[1], load_tue: parsed.weeklyLoad[2], load_wed: parsed.weeklyLoad[3], load_thu: parsed.weeklyLoad[4], load_fri: parsed.weeklyLoad[5], load_sat: parsed.weeklyLoad[6] }, { onConflict: 'user_id' }).select('*').single()
   if (error) throw error
-  return { ...parsed, defaultBlockMinutes: data.default_block_minutes, bufferRatio: Number(data.buffer_ratio), autoLog: data.auto_log }
+  return { ...parsed, defaultBlockMinutes: data.default_block_minutes, bufferRatio: Number(data.buffer_ratio), autoLog: data.auto_log, baseDailyMinutes: Number(data.base_daily_minutes), weeklyLoad: Object.fromEntries(['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'].map((day, index) => [index, Number(data[`load_${day}`])])) as WeeklyLoad }
 }
 
 function capacityProfileRow(input: Omit<CapacityProfile, 'id' | 'createdAt' | 'updatedAt'>) {
   return { name: input.name, start_date: input.startDate, end_date: input.endDate, base_daily_minutes: input.baseDailyMinutes ?? null, load_sun: input.weeklyLoad[0] ?? null, load_mon: input.weeklyLoad[1] ?? null, load_tue: input.weeklyLoad[2] ?? null, load_wed: input.weeklyLoad[3] ?? null, load_thu: input.weeklyLoad[4] ?? null, load_fri: input.weeklyLoad[5] ?? null, load_sat: input.weeklyLoad[6] ?? null, priority: input.priority, enabled: input.enabled }
 }
-const capacityProfileInput = z.object({ name: z.string().trim().min(1).max(40), startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/), endDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/), baseDailyMinutes: z.number().int().min(0).max(1440).optional(), weeklyLoad: z.record(z.number().int().min(0).max(200)), priority: z.number().int().min(-100).max(100), enabled: z.boolean() }).refine(value => value.startDate <= value.endDate, '开始日期不能晚于结束日期')
+const capacityProfileInput = z.object({ name: z.string().trim().min(1).max(40), startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/), endDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/), baseDailyMinutes: z.number().int().min(0).max(960).optional(), weeklyLoad: z.record(z.number().int().min(0).max(200)), priority: z.number().int().min(-100).max(100), enabled: z.boolean() }).refine(value => value.startDate <= value.endDate, '开始日期不能晚于结束日期')
 export async function createCapacityProfile(input: Omit<CapacityProfile, 'id' | 'createdAt' | 'updatedAt'>): Promise<CapacityProfile> { const parsed = capacityProfileInput.parse(input); const local = { id: `local-capacity-profile-${Date.now()}`, ...parsed }; if (!supabase || !(await currentUserId(supabase))) return local; const { data, error } = await supabase.from('capacity_profiles').insert(capacityProfileRow(parsed)).select('*').single(); if (error) throw error; return { ...parsed, id: data.id, createdAt: data.created_at, updatedAt: data.updated_at } }
 export async function updateCapacityProfile(id: string, input: Omit<CapacityProfile, 'id' | 'createdAt' | 'updatedAt'>): Promise<CapacityProfile> { const parsed = capacityProfileInput.parse(input); if (!supabase || id.startsWith('local-') || !(await currentUserId(supabase))) return { id, ...parsed }; const { data, error } = await supabase.from('capacity_profiles').update({ ...capacityProfileRow(parsed), updated_at: new Date().toISOString() }).eq('id', id).select('*').single(); if (error) throw error; return { ...parsed, id: data.id, createdAt: data.created_at, updatedAt: data.updated_at } }
 export async function deleteCapacityProfile(id: string): Promise<void> { if (!supabase || id.startsWith('local-') || !(await currentUserId(supabase))) return; const { error } = await supabase.from('capacity_profiles').delete().eq('id', id); if (error) throw error }
@@ -619,6 +643,7 @@ export async function saveWeeklyInput(input: { weekStart: string; rawText: strin
 }
 
 export function persistLocal(tasks: Task[], courses: Course[], extras?: Pick<WorkspaceData, 'availability' | 'fixedEvents' | 'scheduleItems' | 'materials' | 'studyLogs' | 'preferences' | 'capacityProfiles' | 'dailyCapacityOverrides'>) {
+  localStorage.setItem('study-plan-state', JSON.stringify({ tasks, scheduleItems: extras?.scheduleItems ?? localScheduleItems() }))
   localStorage.setItem('study-tasks', JSON.stringify(tasks))
   localStorage.setItem('study-courses', JSON.stringify(courses))
   if (extras) {
@@ -631,4 +656,35 @@ export function persistLocal(tasks: Task[], courses: Course[], extras?: Pick<Wor
     localStorage.setItem('study-capacity-profiles', JSON.stringify(extras.capacityProfiles))
     localStorage.setItem('study-daily-capacity-overrides', JSON.stringify(extras.dailyCapacityOverrides))
   }
+}
+
+export function isCapacitySchemaError(error: { code?: string; message?: string; details?: string; hint?: string } | null | undefined): boolean {
+  return !!error && /capacity_profiles|daily_capacity_overrides|base_daily_minutes|load_(sun|mon|tue|wed|thu|fri|sat)|does not exist|schema cache|habit_learning|schedule_adjustment/i.test(Object.values(error).join(' '))
+}
+function localAdjustmentEvents(): ScheduleAdjustmentEvent[] {
+  return JSON.parse(localStorage.getItem('study-adjustment-events') ?? '[]') as ScheduleAdjustmentEvent[]
+}
+function mapAdjustmentEvent(row: Record<string, unknown>): ScheduleAdjustmentEvent {
+  return { id: String(row.id), taskId: String(row.task_id), category: String(row.category ?? ''), eventType: row.event_type as ScheduleAdjustmentEvent['eventType'], fromStart: String(row.from_start), fromEnd: String(row.from_end), toStart: String(row.to_start), toEnd: String(row.to_end) }
+}
+export async function resetSchedulingHabits(): Promise<void> {
+  if (!supabase || !(await currentUserId(supabase))) { localStorage.setItem('study-adjustment-events', '[]'); return }
+  const { error } = await supabase.from('schedule_adjustment_events').delete().eq('user_id', await currentUserId(supabase))
+  if (error) throw error
+}
+export async function saveManualScheduleItem(before: ScheduleItem, updated: ScheduleItem, task: Task, learningEnabled: boolean): Promise<ScheduleAdjustmentEvent | null> {
+  const changedTime = before.startTime !== updated.startTime || before.endTime !== updated.endTime
+  const event: ScheduleAdjustmentEvent | null = learningEnabled && (changedTime || before.locked !== updated.locked) ? {
+    id: crypto.randomUUID(), taskId: task.id, category: task.type, eventType: before.startTime !== updated.startTime ? 'move' : before.endTime !== updated.endTime ? 'resize' : updated.locked ? 'lock' : 'unlock',
+    fromStart: before.startTime, fromEnd: before.endTime, toStart: updated.startTime, toEnd: updated.endTime,
+  } : null
+  if (!supabase || !(await currentUserId(supabase))) {
+    // The plan is saved first; a failure never reports an unsaved edit as successful.
+    localStorage.setItem('study-plan-state', JSON.stringify({ tasks: localTasks(), scheduleItems: localScheduleItems().map(item => item.id === before.id ? updated : item) }))
+    if (event) localStorage.setItem('study-adjustment-events', JSON.stringify([...localAdjustmentEvents(), event]))
+    return event
+  }
+  const { error } = await supabase.rpc('adjust_schedule_item', { p_item_id: before.id, p_start: updated.startTime, p_end: updated.endTime, p_locked: updated.locked })
+  if (error) throw error
+  return event
 }
