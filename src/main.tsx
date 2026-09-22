@@ -66,7 +66,7 @@ import {
 } from './lib/data'
 import { ShanHaiBackground, type ShanHaiState } from './components/ShanHaiBackground'
 import { StudyHeatmap } from './components/StudyHeatmap'
-import { buildSchedule, type ReplanStrategy } from './lib/scheduler'
+import { buildSchedule, hasExpiredAutomaticScheduleItems, nextAutomaticScheduleExpiry, type ReplanStrategy } from './lib/scheduler'
 import { localDateKey, minutesBetween } from './lib/date-utils'
 import { getDailyCapacityBreakdown } from './lib/daily-capacity'
 import { isFutureScheduleItem } from './lib/data'
@@ -184,6 +184,7 @@ function App() {
     try { localStorage.setItem('study-window-opacity', String(value)) } catch { /* Keep the control usable when storage is unavailable. */ }
   }
   const [replanning, setReplanning] = useState(false)
+  const autoRepairInFlight = useRef(false)
   const [deepSeekKey, setDeepSeekKey] = useState('')
   const [hasSavedDeepSeekKey, setHasSavedDeepSeekKey] = useState(false)
   const [aiDrafts, setAiDrafts] = useState<TaskDraft[]>([])
@@ -495,11 +496,11 @@ function App() {
       void recordStudyLog(taskId, plannedMinutes, actualMinutes)
     }
   }
-  async function runReplan(strategy: ReplanStrategy = 'minimal_change', taskList = tasks, availabilityOverride = availability, fixedEventsOverride = fixedEvents) {
+  async function runReplan(strategy: ReplanStrategy = 'minimal_change', taskList = tasks, availabilityOverride = availability, fixedEventsOverride = fixedEvents, allowEmpty = false) {
     setReplanning(true)
     try {
       const result = buildSchedule(taskList, availabilityOverride, fixedEventsOverride, scheduleItems, { strategy, blockMinutes: preferences.defaultBlockMinutes, bufferRatio: preferences.bufferRatio, minBlockMinutes: preferences.minBlockMinutes, breakMinutes: preferences.breakMinutes, peakStartHour: preferences.peakStartHour, peakEndHour: preferences.peakEndHour, preferences, capacityProfiles, dailyCapacityOverrides })
-      if (result.items.length === 0 && taskList.some(task => task.status !== 'done')) throw new Error('当前时间都不可用或已被课程占用')
+      if (!allowEmpty && result.items.length === 0 && taskList.some(task => task.status !== 'done')) throw new Error('当前时间都不可用或已被课程占用')
       const saved = await saveSchedule({ reason: strategy === 'urgent' ? '临时任务紧急插入' : '根据任务和不可用时间重新排程', items: result.items })
       setScheduleItems(saved.items)
       setScheduleChanges(result.changes)
@@ -508,6 +509,40 @@ function App() {
     } catch (error) { setToast(error instanceof Error ? error.message : '排程失败，请重试'); throw error }
     finally { setReplanning(false) }
   }
+  useEffect(() => {
+    if (loading || replanning) return
+    let disposed = false
+    let expiryTimer: number | undefined
+    const checkAndRepairExpiredSchedule = async () => {
+      if (disposed || replanning || autoRepairInFlight.current) return
+      if (!hasExpiredAutomaticScheduleItems(scheduleItems, tasks, new Date())) return
+      autoRepairInFlight.current = true
+      try {
+        const result = await runReplan('preserve', tasks, availability, fixedEvents, true)
+        if (!disposed) {
+          const repairedCount = result.changes.filter(change => change.type === 'moved' || change.type === 'added').length
+          setToast(repairedCount > 0 ? `已将 ${repairedCount} 个未完成任务顺延到后续时间` : '已检查过期计划')
+        }
+      } catch (error) {
+        console.error('automatic schedule repair failed', error)
+      } finally {
+        autoRepairInFlight.current = false
+      }
+    }
+    void checkAndRepairExpiredSchedule()
+    const nextExpiry = nextAutomaticScheduleExpiry(scheduleItems, tasks, new Date())
+    if (nextExpiry) {
+      const delay = nextExpiry.getTime() - Date.now() + 500
+      if (delay > 0 && delay <= 2_147_000_000) expiryTimer = window.setTimeout(() => { void checkAndRepairExpiredSchedule() }, delay)
+    }
+    const handleVisibilityChange = () => { if (document.visibilityState === 'visible') void checkAndRepairExpiredSchedule() }
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+    return () => {
+      disposed = true
+      if (expiryTimer !== undefined) window.clearTimeout(expiryTimer)
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
+    }
+  }, [loading, replanning, scheduleItems, tasks, availability, fixedEvents, preferences, capacityProfiles, dailyCapacityOverrides])
   async function analyzeWeeklyContent(content: string) {
     if (!(await ensureDeepSeekKey())) return
     setAiBusy(true)

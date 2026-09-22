@@ -10,7 +10,7 @@ export type SchedulerResult = { items: ScheduleItem[]; changes: ScheduleChange[]
 export type SchedulerOptions = { learnedPreferences?: LearnedSchedulingPreferences; now?: Date; blockMinutes?: number; bufferRatio?: number; strategy?: ReplanStrategy; horizonDays?: number; minBlockMinutes?: number; breakMinutes?: number; peakStartHour?: number; peakEndHour?: number; preferences?: UserPreferences; capacityProfiles?: CapacityProfile[]; dailyCapacityOverrides?: DailyCapacityOverride[] }
 
 type Interval = { start: Date; end: Date }
-type TaskState = { task: Task; remaining: number; initialRemaining: number; deadline: Date; explicitDeadline: boolean; selectedDay?: string; allocatedByDay: Map<string, number>; generated: ScheduleItem[] }
+type TaskState = { task: Task; remaining: number; initialRemaining: number; deadline: Date; explicitDeadline: boolean; overdue: boolean; selectedDay?: string; allocatedByDay: Map<string, number>; generated: ScheduleItem[] }
 type Candidate = { state: TaskState; start: Date; end: Date; duration: number; dayKey: string; score: number }
 
 const DAY_MS = 24 * 60 * 60_000
@@ -28,6 +28,33 @@ function isOvernightAutomaticBlock(item: ScheduleItem): boolean {
   const end = new Date(item.endTime)
   if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return false
   return start.getHours() < DEFAULT_AUTO_START_HOUR || start.getHours() >= DEFAULT_AUTO_END_HOUR || end.getHours() < DEFAULT_AUTO_START_HOUR
+}
+
+export function isInProgressAutomaticScheduleItem(item: ScheduleItem, now: Date): boolean {
+  if ((item.source ?? 'auto') !== 'auto' || item.locked || item.manuallyAdjustedAt || item.status === 'completed' || item.status === 'skipped') return false
+  const start = new Date(item.startTime); const end = new Date(item.endTime)
+  return !Number.isNaN(start.getTime()) && !Number.isNaN(end.getTime()) && start <= now && now < end
+}
+
+export function isExpiredAutomaticScheduleItem(item: ScheduleItem, now: Date): boolean {
+  if ((item.source ?? 'auto') !== 'auto' || item.locked || item.manuallyAdjustedAt || item.status === 'completed' || item.status === 'skipped') return false
+  const end = new Date(item.endTime)
+  return !Number.isNaN(end.getTime()) && end <= now
+}
+
+export function hasExpiredAutomaticScheduleItems(scheduleItems: ScheduleItem[], tasks: Task[], now: Date): boolean {
+  const taskById = new Map(tasks.map(task => [task.id, task]))
+  return scheduleItems.some(item => isExpiredAutomaticScheduleItem(item, now) && taskById.get(item.taskId)?.status !== 'done')
+}
+
+export function nextAutomaticScheduleExpiry(scheduleItems: ScheduleItem[], tasks: Task[], now: Date): Date | null {
+  const taskById = new Map(tasks.map(task => [task.id, task]))
+  const next = scheduleItems
+    .filter(item => (item.source ?? 'auto') === 'auto' && !item.locked && !item.manuallyAdjustedAt && item.status !== 'completed' && item.status !== 'skipped' && taskById.get(item.taskId)?.status !== 'done')
+    .map(item => new Date(item.endTime))
+    .filter(date => !Number.isNaN(date.getTime()) && date > now)
+    .sort((a, b) => a.getTime() - b.getTime())[0]
+  return next ?? null
 }
 
 function mondayOf(date: Date): Date {
@@ -132,12 +159,15 @@ function buildAvailabilityWindows(availability: AvailabilityRule[], monday: Date
   return windows.filter(item => intervalMinutes(item) >= 5).sort((a, b) => a.start.getTime() - b.start.getTime())
 }
 
-function taskDeadline(task: Task, now: Date, horizonEnd: Date): { deadline: Date; explicit: boolean } {
+function taskDeadline(task: Task, now: Date, horizonEnd: Date): { deadline: Date; explicit: boolean; overdue: boolean } {
   if (task.deadlineIso) {
     const parsed = new Date(task.deadlineIso)
-    if (!Number.isNaN(parsed.getTime())) return { deadline: parsed, explicit: true }
+    if (!Number.isNaN(parsed.getTime())) {
+      if (parsed <= now) return { deadline: new Date(Math.min(now.getTime() + 7 * DAY_MS, horizonEnd.getTime())), explicit: true, overdue: true }
+      return { deadline: parsed, explicit: true, overdue: false }
+    }
   }
-  return { deadline: new Date(Math.min(now.getTime() + 7 * DAY_MS, horizonEnd.getTime())), explicit: false }
+  return { deadline: new Date(Math.min(now.getTime() + 7 * DAY_MS, horizonEnd.getTime())), explicit: false, overdue: false }
 }
 
 function minutesBefore(intervals: Interval[], deadline: Date): number {
@@ -221,11 +251,13 @@ function scoreCandidate(candidate: Omit<Candidate, 'score'>, states: TaskState[]
   const priority = clamp(state.task.priority / 100, 0, 1); const balance = balanceFit(dayKey, duration, target, planned, capacity); const energy = energyFit(state.task, start, options.peakStartHour, options.peakEndHour)
   const stability = stabilityFit(start, existing.filter(item => item.taskId === state.task.id)); const spacing = spacingFit(state, dayKey); const horizon = Math.max(DAY_MS, state.deadline.getTime() - now.getTime())
   const earliness = 1 - clamp((start.getTime() - now.getTime()) / horizon, 0, 1); const todayBonus = localDateKey(start) === localDateKey(now) ? 4 : 0
-  if (options.strategy === 'urgent') return urgency * 40 + priority * 25 + balance * 15 + energy * 5 + stability * 2 + spacing * 3 + earliness * (4 + urgency * 10) + todayBonus
-  return urgency * 35 + priority * 15 + balance * 30 + energy * 8 + stability * 7 + spacing * 5 + earliness * (3 + urgency * 5) + todayBonus
+  const overdueBonus = state.overdue ? 18 : 0
+  if (options.strategy === 'urgent') return urgency * 40 + priority * 25 + balance * 15 + energy * 5 + stability * 2 + spacing * 3 + earliness * (4 + urgency * 10) + todayBonus + overdueBonus
+  return urgency * 35 + priority * 15 + balance * 30 + energy * 8 + stability * 7 + spacing * 5 + earliness * (3 + urgency * 5) + todayBonus + overdueBonus
 }
 
-function generatedReason(task: Task, strategy: ReplanStrategy): string {
+function generatedReason(task: Task, strategy: ReplanStrategy, overdue = false): string {
+  if (overdue) return '任务已逾期：将未完成时间顺延到当前时间之后'
   if (strategy === 'urgent') return '紧急策略：优先截止压力与优先级，同时满足硬约束'
   if (task.completionMode === 'single_day') return '一次性任务：选择可完整容纳任务且负载更合适的日期'
   if (task.completionMode === 'spread_days') return `按 ${Math.min(Math.max(task.spreadDays ?? 2, 2), 7)} 天分摊，并兼顾每日负载`
@@ -243,14 +275,21 @@ export function buildSchedule(tasks: Task[], availability: AvailabilityRule[], f
   const strategy = options?.strategy ?? 'minimal_change'; const horizonDays = Math.min(Math.max(options?.horizonDays ?? 28, 7), 56)
   const minBlockMinutes = Math.min(Math.max(options?.minBlockMinutes ?? 20, 5), blockMinutes); const breakMinutes = Math.min(Math.max(options?.breakMinutes ?? 0, 0), 30)
   const peakStartHour = clamp(options?.peakStartHour ?? 9, 0, 23); const peakEndHour = clamp(options?.peakEndHour ?? 12, peakStartHour + 1, 24); const monday = mondayOf(now); const horizonEnd = new Date(monday.getTime() + horizonDays * DAY_MS)
-  const taskById = new Map(tasks.map(task => [task.id, task])); const alwaysRetained = existingItems.filter(item => item.locked || item.source === 'manual' || item.source === 'imported' || item.status === 'completed' || (new Date(item.startTime) < now && !isOvernightAutomaticBlock(item)) || taskById.get(item.taskId)?.status === 'done'); const retained = strategy === 'preserve' ? existingItems : alwaysRetained
+  const taskById = new Map(tasks.map(task => [task.id, task]))
+  const shouldReplaceAutomaticItem = (item: ScheduleItem) => {
+    if (item.locked || item.source === 'manual' || item.source === 'imported' || item.status === 'completed' || item.status === 'skipped' || taskById.get(item.taskId)?.status === 'done') return false
+    return isOvernightAutomaticBlock(item) || isExpiredAutomaticScheduleItem(item, now)
+  }
+  const validExistingItems = existingItems.filter(item => !shouldReplaceAutomaticItem(item) || isInProgressAutomaticScheduleItem(item, now))
+  const alwaysRetained = validExistingItems.filter(item => item.locked || item.source === 'manual' || item.source === 'imported' || item.status === 'completed' || isInProgressAutomaticScheduleItem(item, now) || taskById.get(item.taskId)?.status === 'done')
+  const retained = strategy === 'preserve' ? validExistingItems : alwaysRetained
   const retainedIds = new Set(retained.map(item => item.id)); const windows = buildAvailabilityWindows(availability, monday, now, horizonDays)
   const capacityIntervals = subtractIntervals(windows, expandFixedEvents(fixedEvents, monday, horizonDays))
   const defaultPreferences: UserPreferences = options?.preferences ?? { defaultBlockMinutes: (blockMinutes === 25 || blockMinutes === 90 ? blockMinutes : 50) as 25 | 50 | 90, bufferRatio, autoLog: true, breakMinutes: (breakMinutes === 5 || breakMinutes === 15 ? breakMinutes : 10) as 5 | 10 | 15, minBlockMinutes: (minBlockMinutes === 15 || minBlockMinutes === 25 ? minBlockMinutes : 20) as 15 | 20 | 25, peakStartHour, peakEndHour, baseDailyMinutes: sharedDefaults.baseDailyMinutes, weeklyLoad: sharedDefaults.weeklyLoad }
   const capacityByDay = new Map<string, number>()
   for (let day = 0; day < horizonDays; day += 1) {
     const date = new Date(monday); date.setDate(monday.getDate() + day)
-    const breakdown = getDailyCapacityBreakdown({ date, now, preferences: { ...defaultPreferences, bufferRatio }, profiles: options?.capacityProfiles ?? [], overrides: options?.dailyCapacityOverrides ?? [], unavailableRules: availability, fixedEvents, scheduleItems: existingItems })
+    const breakdown = getDailyCapacityBreakdown({ date, now, preferences: { ...defaultPreferences, bufferRatio }, profiles: options?.capacityProfiles ?? [], overrides: options?.dailyCapacityOverrides ?? [], unavailableRules: availability, fixedEvents, scheduleItems: validExistingItems })
     capacityByDay.set(localDateKey(date), breakdown.effectiveCapacityMinutes)
   }
   const retainedIntervals = retained.map(item => ({ start: new Date(item.startTime), end: new Date(item.endTime) })); let free = subtractIntervals(capacityIntervals, retainedIntervals).sort((a, b) => a.start.getTime() - b.start.getTime())
@@ -268,7 +307,7 @@ export function buildSchedule(tasks: Task[], availability: AvailabilityRule[], f
   const states: TaskState[] = tasks.filter(task => task.status !== 'done').map(task => {
     const completed = Math.max(0, task.completedMinutes ?? 0); const alreadyPlanned = retainedPlannedByTask.get(task.id) ?? 0; const remaining = Math.max(0, task.minutes - completed - alreadyPlanned)
     const deadline = taskDeadline(task, now, horizonEnd)
-    return { task, remaining, initialRemaining: remaining, deadline: deadline.deadline, explicitDeadline: deadline.explicit, allocatedByDay: new Map<string, number>(), generated: [] }
+    return { task, remaining, initialRemaining: remaining, deadline: deadline.deadline, explicitDeadline: deadline.explicit, overdue: deadline.overdue, allocatedByDay: new Map<string, number>(), generated: [] }
   }).filter(state => state.remaining > 0)
   const targetByDay = buildIdealLoad(states, free, retainedPlannedByDay); const plannedByDay = new Map(retainedPlannedByDay); const conflicts: string[] = []
   retained.forEach(item => {
@@ -310,9 +349,9 @@ export function buildSchedule(tasks: Task[], availability: AvailabilityRule[], f
         let duration = 0
         if (state.task.requireContinuous) { if (available < state.remaining || capacityRemainingToday < state.remaining || (dailyRemaining !== undefined && dailyRemaining < state.remaining)) continue; duration = state.remaining }
         else { duration = chooseDuration(state.remaining, preferred, Math.min(available, capacityRemainingToday), minBlockMinutes, dailyRemaining); if (duration < minimum) continue }
-        for (const start of candidateStarts(interval, duration, state.deadline, peakStartHour, existingItems.filter(item => item.taskId === state.task.id))) {
+        for (const start of candidateStarts(interval, duration, state.deadline, peakStartHour, validExistingItems.filter(item => item.taskId === state.task.id))) {
           const end = new Date(start.getTime() + duration * 60_000); const base = { state, start, end, duration, dayKey }
-          const candidate = { ...base, score: scoreCandidate(base, states, free, targetByDay, plannedByDay, capacityByDay, existingItems, { strategy, peakStartHour, peakEndHour }, now) + habitCandidateScore(options?.preferences?.habitLearningEnabled === false ? undefined : options?.learnedPreferences, state.task, start, duration) }
+          const candidate = { ...base, score: scoreCandidate(base, states, free, targetByDay, plannedByDay, capacityByDay, validExistingItems, { strategy, peakStartHour, peakEndHour }, now) + habitCandidateScore(options?.preferences?.habitLearningEnabled === false ? undefined : options?.learnedPreferences, state.task, start, duration) }
           if (!best || candidate.score > best.score + EPSILON || (Math.abs(candidate.score - best.score) <= EPSILON && (candidate.start < best.start || (candidate.start.getTime() === best.start.getTime() && candidate.state.task.id < best.state.task.id)))) best = candidate
         }
       }
@@ -335,8 +374,8 @@ export function buildSchedule(tasks: Task[], availability: AvailabilityRule[], f
     const previous = existingItems.filter(item => item.taskId === task.id); const next = items.filter(item => item.taskId === task.id); const state = states.find(item => item.task.id === task.id)
     if (conflictIds.has(task.id)) changes.push({ type: 'conflict', taskId: task.id, reason: conflicts.find(message => message.startsWith(task.title)) })
     else if (next.length && sameSchedule(previous, next)) changes.push({ type: 'unchanged', taskId: task.id, to: next[0].startTime, reason: next.find(item => retainedIds.has(item.id))?.locked ? '锁定时间块' : task.status === 'done' ? '已完成任务' : '保持原计划' })
-    else if (previous.length && next.length) changes.push({ type: 'moved', taskId: task.id, from: previous[0].startTime, to: next[0].startTime, reason: generatedReason(task, strategy) })
-    else if (state?.generated.length) changes.push({ type: 'added', taskId: task.id, to: state.generated[0].startTime, reason: generatedReason(task, strategy) })
+    else if (previous.length && next.length) changes.push({ type: 'moved', taskId: task.id, from: previous[0].startTime, to: next[0].startTime, reason: generatedReason(task, strategy, state?.overdue) })
+    else if (state?.generated.length) changes.push({ type: 'added', taskId: task.id, to: state.generated[0].startTime, reason: generatedReason(task, strategy, state.overdue) })
   })
   return { items, changes, conflicts }
 }

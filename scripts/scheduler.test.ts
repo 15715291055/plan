@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { buildSchedule } from '../src/lib/scheduler'
+import { buildSchedule, isExpiredAutomaticScheduleItem } from '../src/lib/scheduler'
 import { localDateKey } from '../src/lib/date-utils'
 import { minutesBetween } from '../src/lib/date-utils'
 import type { FixedEvent, ScheduleItem, Task } from '../src/lib/data'
@@ -59,6 +59,50 @@ test('replaces stale overnight automatic blocks during a normal replan', () => {
   assert.ok(!result.items.some(item => item.id === oldAutomatic.id))
   assert.ok(result.items.some(item => item.taskId === 'existing-task'))
   assert.ok(result.items.every(item => new Date(item.startTime).getHours() >= 8))
+})
+
+test('replaces an expired daytime automatic block with a future block', () => {
+  const current = new Date('2026-09-14T15:00:00+08:00')
+  const desired = [{ id: 'mon', weekday: 1, startTime: '15:00', endTime: '22:00' }]
+  const expired: ScheduleItem = { id: 'expired-auto', taskId: 'expired-task', startTime: '2026-09-14T09:00:00+08:00', endTime: '2026-09-14T09:50:00+08:00', locked: false, status: 'planned', source: 'auto' }
+  const result = buildSchedule([task('expired-task', 50)], unavailableFor(desired), [], [expired], { now: current, strategy: 'preserve', bufferRatio: 0 })
+  const replacement = result.items.find(item => item.taskId === 'expired-task')
+  assert.ok(replacement)
+  assert.notEqual(replacement?.id, expired.id)
+  assert.ok(new Date(replacement!.startTime).getTime() >= current.getTime())
+})
+
+test('preserve repair keeps future automatic blocks and only replaces expired work', () => {
+  const current = new Date('2026-09-14T15:00:00+08:00')
+  const desired = [{ id: 'mon', weekday: 1, startTime: '15:00', endTime: '22:00' }]
+  const expired: ScheduleItem = { id: 'expired-auto', taskId: 'repair-task', startTime: '2026-09-14T09:00:00+08:00', endTime: '2026-09-14T09:50:00+08:00', locked: false, status: 'planned', source: 'auto' }
+  const future: ScheduleItem = { id: 'future-auto', taskId: 'repair-task', startTime: '2026-09-14T17:00:00+08:00', endTime: '2026-09-14T17:50:00+08:00', locked: false, status: 'planned', source: 'auto' }
+  const result = buildSchedule([task('repair-task', 100)], unavailableFor(desired), [], [expired, future], { now: current, strategy: 'preserve', bufferRatio: 0 })
+  assert.ok(!result.items.some(item => item.id === expired.id))
+  assert.ok(result.items.some(item => item.id === future.id))
+})
+
+test('does not repair an automatic block that is still in progress', () => {
+  const current = new Date('2026-09-14T14:30:00+08:00')
+  const inProgress: ScheduleItem = { id: 'current-auto', taskId: 'current-task', startTime: '2026-09-14T14:00:00+08:00', endTime: '2026-09-14T15:00:00+08:00', locked: false, status: 'planned', source: 'auto' }
+  assert.equal(isExpiredAutomaticScheduleItem(inProgress, current), false)
+})
+
+test('does not repair completed or skipped automatic blocks', () => {
+  const current = new Date('2026-09-14T15:00:00+08:00')
+  for (const status of ['completed', 'skipped'] as const) {
+    const item: ScheduleItem = { id: `old-${status}`, taskId: 'task', startTime: '2026-09-14T09:00:00+08:00', endTime: '2026-09-14T09:50:00+08:00', locked: false, status, source: 'auto' }
+    assert.equal(isExpiredAutomaticScheduleItem(item, current), false)
+  }
+})
+
+test('reschedules unfinished work even when the original deadline has passed', () => {
+  const current = new Date('2026-09-14T15:00:00+08:00')
+  const desired = [{ id: 'mon', weekday: 1, startTime: '15:00', endTime: '22:00' }]
+  const overdueTask = task('overdue-task', 50, '2026-09-14T12:00:00+08:00')
+  const expired: ScheduleItem = { id: 'expired-overdue', taskId: overdueTask.id, startTime: '2026-09-14T09:00:00+08:00', endTime: '2026-09-14T09:50:00+08:00', locked: false, status: 'planned', source: 'auto' }
+  const result = buildSchedule([overdueTask], unavailableFor(desired), [], [expired], { now: current, strategy: 'preserve', bufferRatio: 0 })
+  assert.ok(result.items.some(item => item.taskId === overdueTask.id && new Date(item.startTime).getTime() >= current.getTime()))
 })
 
 test('keeps past manual and locked blocks while replacing stale automatic blocks', () => {
