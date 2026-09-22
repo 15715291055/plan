@@ -53,6 +53,22 @@ test('preserve strategy retains existing unlocked blocks', () => {
   assert.equal(result.changes.find(change => change.taskId === 'existing-task')?.reason, '保持原计划')
 })
 
+test('replaces stale overnight automatic blocks during a normal replan', () => {
+  const oldAutomatic: ScheduleItem = { id: 'old-auto-midnight', taskId: 'existing-task', startTime: '2026-09-14T00:00:00+08:00', endTime: '2026-09-14T00:50:00+08:00', locked: false, status: 'planned', source: 'auto' }
+  const result = buildSchedule([task('existing-task', 50)], unavailableFor(availability), [], [oldAutomatic], { now, bufferRatio: 0 })
+  assert.ok(!result.items.some(item => item.id === oldAutomatic.id))
+  assert.ok(result.items.some(item => item.taskId === 'existing-task'))
+  assert.ok(result.items.every(item => new Date(item.startTime).getHours() >= 8))
+})
+
+test('keeps past manual and locked blocks while replacing stale automatic blocks', () => {
+  const manual: ScheduleItem = { id: 'past-manual', taskId: 'manual-task', startTime: '2026-09-13T00:00:00+08:00', endTime: '2026-09-13T00:50:00+08:00', locked: false, status: 'planned', source: 'manual' }
+  const locked: ScheduleItem = { id: 'past-locked', taskId: 'locked-task', startTime: '2026-09-13T00:00:00+08:00', endTime: '2026-09-13T00:50:00+08:00', locked: true, status: 'planned', source: 'auto' }
+  const result = buildSchedule([task('manual-task', 0), task('locked-task', 0)], [], [], [manual, locked], { now })
+  assert.ok(result.items.some(item => item.id === manual.id))
+  assert.ok(result.items.some(item => item.id === locked.id))
+})
+
 test('spreads a multi-day task across the selected number of dates', () => {
   const multiDayAvailability = [
     { id: 'mon', weekday: 1, startTime: '18:00', endTime: '20:00' },

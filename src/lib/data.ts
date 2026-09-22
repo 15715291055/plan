@@ -68,6 +68,16 @@ export type WorkspaceData = {
 export type AvailabilityRule = { id: string; weekday: number; startTime: string; endTime: string }
 export type FixedEvent = { id: string; title: string; startTime: string; endTime: string; recurrenceRule?: string }
 export type ScheduleItem = { id: string; taskId: string; startTime: string; endTime: string; locked: boolean; status: string; source?: 'auto' | 'manual' | 'imported'; manuallyAdjustedAt?: string | null }
+
+const AUTO_SCHEDULE_START_HOUR = 8
+const AUTO_SCHEDULE_END_HOUR = 23
+export function isOvernightAutomaticScheduleItem(item: ScheduleItem): boolean {
+  if ((item.source ?? 'auto') !== 'auto' || item.manuallyAdjustedAt) return false
+  const start = new Date(item.startTime)
+  const end = new Date(item.endTime)
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return false
+  return start.getHours() < AUTO_SCHEDULE_START_HOUR || start.getHours() >= AUTO_SCHEDULE_END_HOUR || end.getHours() < AUTO_SCHEDULE_START_HOUR
+}
 export type MaterialTask = { title: string; estimated_minutes: number; difficulty: number; task_type: string }
 export type MaterialAnalysis = { chapters: string[]; knowledge_points: string[]; tasks: MaterialTask[]; summary: string }
 export type Material = { id: string; fileName: string; fileType: string; fileSize?: number; status: string; course?: string; createdAt: string; storagePath?: string; analysisResult?: MaterialAnalysis }
@@ -213,7 +223,8 @@ function localScheduleItems(): ScheduleItem[] {
   try {
     const snapshot = localStorage.getItem('study-plan-state')
     const raw = snapshot ? JSON.stringify(JSON.parse(snapshot).scheduleItems) : localStorage.getItem('study-schedule-items')
-    return raw ? JSON.parse(raw) as ScheduleItem[] : []
+    const items = raw ? JSON.parse(raw) as ScheduleItem[] : []
+    return items.filter(item => !isOvernightAutomaticScheduleItem(item))
   } catch { return [] }
 }
 
@@ -375,7 +386,7 @@ export async function loadWorkspace(): Promise<WorkspaceData> {
   const firstError = [courseResult, taskResult, availabilityResult, fixedResult, scheduleResult, materialResult, logResult].find(result => result.error)?.error
   if (firstError) throw new Error(`数据库读取失败：${firstError.message}`)
   const courses: Course[] = (courseResult.data ?? []).map(row => ({ id: row.id, name: row.name, code: row.code ?? undefined, color: row.color ?? courseColors[0], semester: row.semester ?? undefined, description: row.description ?? undefined }))
-  const scheduleItems: ScheduleItem[] = (scheduleResult.data ?? []).map(row => ({ id: row.id, taskId: row.task_id, startTime: row.start_time, endTime: row.end_time, source: row.source ?? 'auto', manuallyAdjustedAt: row.manually_adjusted_at, locked: Boolean(row.locked), status: row.status ?? 'planned' }))
+  const scheduleItems: ScheduleItem[] = (scheduleResult.data ?? []).map(row => ({ id: row.id, taskId: row.task_id, startTime: row.start_time, endTime: row.end_time, source: row.source ?? 'auto', manuallyAdjustedAt: row.manually_adjusted_at, locked: Boolean(row.locked), status: row.status ?? 'planned' })).filter(item => !isOvernightAutomaticScheduleItem(item))
   return {
     adjustmentEvents: (adjustmentsResult.data ?? []).map(mapAdjustmentEvent),
     courses, tasks: (taskResult.data ?? []).map(row => mapTask(row, courses, scheduleItems)), source: 'supabase',

@@ -22,6 +22,14 @@ const DEFAULT_AUTO_START_HOUR = 8
 const DEFAULT_AUTO_END_HOUR = 23
 const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max)
 
+function isOvernightAutomaticBlock(item: ScheduleItem): boolean {
+  if ((item.source ?? 'auto') !== 'auto' || item.manuallyAdjustedAt) return false
+  const start = new Date(item.startTime)
+  const end = new Date(item.endTime)
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return false
+  return start.getHours() < DEFAULT_AUTO_START_HOUR || start.getHours() >= DEFAULT_AUTO_END_HOUR || end.getHours() < DEFAULT_AUTO_START_HOUR
+}
+
 function mondayOf(date: Date): Date {
   const value = new Date(date); value.setHours(0, 0, 0, 0)
   const day = (value.getDay() + 6) % 7
@@ -235,7 +243,7 @@ export function buildSchedule(tasks: Task[], availability: AvailabilityRule[], f
   const strategy = options?.strategy ?? 'minimal_change'; const horizonDays = Math.min(Math.max(options?.horizonDays ?? 28, 7), 56)
   const minBlockMinutes = Math.min(Math.max(options?.minBlockMinutes ?? 20, 5), blockMinutes); const breakMinutes = Math.min(Math.max(options?.breakMinutes ?? 0, 0), 30)
   const peakStartHour = clamp(options?.peakStartHour ?? 9, 0, 23); const peakEndHour = clamp(options?.peakEndHour ?? 12, peakStartHour + 1, 24); const monday = mondayOf(now); const horizonEnd = new Date(monday.getTime() + horizonDays * DAY_MS)
-  const taskById = new Map(tasks.map(task => [task.id, task])); const alwaysRetained = existingItems.filter(item => item.locked || item.source === 'manual' || item.source === 'imported' || item.status === 'completed' || new Date(item.startTime) < now || taskById.get(item.taskId)?.status === 'done'); const retained = strategy === 'preserve' ? existingItems : alwaysRetained
+  const taskById = new Map(tasks.map(task => [task.id, task])); const alwaysRetained = existingItems.filter(item => item.locked || item.source === 'manual' || item.source === 'imported' || item.status === 'completed' || (new Date(item.startTime) < now && !isOvernightAutomaticBlock(item)) || taskById.get(item.taskId)?.status === 'done'); const retained = strategy === 'preserve' ? existingItems : alwaysRetained
   const retainedIds = new Set(retained.map(item => item.id)); const windows = buildAvailabilityWindows(availability, monday, now, horizonDays)
   const capacityIntervals = subtractIntervals(windows, expandFixedEvents(fixedEvents, monday, horizonDays))
   const defaultPreferences: UserPreferences = options?.preferences ?? { defaultBlockMinutes: (blockMinutes === 25 || blockMinutes === 90 ? blockMinutes : 50) as 25 | 50 | 90, bufferRatio, autoLog: true, breakMinutes: (breakMinutes === 5 || breakMinutes === 15 ? breakMinutes : 10) as 5 | 10 | 15, minBlockMinutes: (minBlockMinutes === 15 || minBlockMinutes === 25 ? minBlockMinutes : 20) as 15 | 20 | 25, peakStartHour, peakEndHour, baseDailyMinutes: sharedDefaults.baseDailyMinutes, weeklyLoad: sharedDefaults.weeklyLoad }
